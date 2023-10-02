@@ -110,12 +110,12 @@ namespace engone {
 		Logger& operator<<(double value);
 		Logger& operator<<(float value);
 
-#ifdef ENGONE_GLM
+// #ifdef ENGONE_GLM
 		Logger& operator<<(const glm::vec3& value);
 		Logger& operator<<(const glm::vec4& value);
 		Logger& operator<<(const glm::quat& value);
 		Logger& operator<<(const glm::mat4& value);
-#endif
+// #endif
 #ifdef ENGONE_PHYSICS
 		Logger& operator<<(const rp3d::Vector3& value);
 		Logger& operator<<(const rp3d::Quaternion& value);
@@ -133,8 +133,11 @@ namespace engone {
 			log::Filter filter = log::FilterAll;
 
 			std::string logReport;
-			
-			Memory<char> lineBuffer{};
+
+			// Memory<char> lineBuffer{};
+            char* lineBuffer_data = nullptr;
+            u32 lineBuffer_max = 0;
+            u32 lineBuffer_used = 0;
 
 			// ensure free space
 			char* ensure(u32 bytes);

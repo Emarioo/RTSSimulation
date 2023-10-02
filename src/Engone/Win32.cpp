@@ -15,9 +15,12 @@
 
 // #define LOG_ALLOCATIONS
 
+#define NO_PERF
+
 #include <unordered_map>
 #include <vector>
 #include <string>
+
 
 // #define NOMINMAX
 // #define _WIN32_WINNT 0x0601
@@ -26,10 +29,11 @@
 
 // #include <mutex>
 // Cheeky include
-#include "BetBat/Util/Perf.h"
+// #include "BetBat/Util/Perf.h"
 #include "Engone/Win32Includes.h"
+#include "Engone/Asserts.h"
 
-#include "BetBat/Util/Array.h"
+// #include "BetBat/Util/Array.h"
 
 #ifdef USE_RDTSC
 // to get cpu clock speed
@@ -37,6 +41,8 @@
 // #include <intrin.h> // included by Win32Includes
 // #pragma comment(lib,"Advapi32.lib")
 #endif
+
+#define MEASURE
 
 // Name collision
 auto WIN_Sleep = Sleep;
@@ -55,7 +61,8 @@ namespace engone {
 		std::string root;
 		std::string dir;
 		HANDLE handle;
-		DynamicArray<std::string> directories;
+		// DynamicArray<std::string> directories;
+		std::vector<std::string> directories;
 		char* tempPtr = nullptr; // used in result
 		u32 max = 0; // not including \0
 	};
@@ -68,7 +75,8 @@ namespace engone {
 		info.root.resize(pathlen);
 		memcpy((char*)info.root.data(), name, pathlen);
 		info.handle=INVALID_HANDLE_VALUE;
-		info.directories.add(info.root);
+		// info.directories.add(info.root);
+		info.directories.push_back(info.root);
 
 		
 		// DWORD err = GetLastError();
@@ -108,7 +116,8 @@ namespace engone {
 				// printf("FindFirstFile %s\n",temp.c_str());
 				// TODO: This does a memcpy on the whole array (almost).
 				//  That's gonna be slow!
-				info->second.directories.remove(0);
+				// info->second.directories.remove(0);
+				info->second.directories.erase(info->second.directories.begin());
 				// fprintf(stderr, "%s %p\n", temp.c_str(), &data);
 				
 				// DWORD err = GetLastError();
@@ -190,7 +199,8 @@ namespace engone {
 		result->lastWriteSeconds = time/10000000.f; // 100-nanosecond intervals
 		result->isDirectory = data.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY;
 		if(result->isDirectory){
-            info->second.directories.add(result->name);
+            // info->second.directories.add(result->name);
+            info->second.directories.push_back(result->name);
         }
 
 		for(int i=0;i<result->namelen;i++){
@@ -206,7 +216,8 @@ namespace engone {
 			return;
 		}
 		if(info->second.directories.size()!=0)
-			info->second.directories.pop();
+			// info->second.directories.pop();
+			info->second.directories.pop_back();
 	}
 	void DirectoryIteratorDestroy(DirectoryIterator iterator, DirectoryIteratorData* dataToDestroy){
 		auto info = s_rdiInfos.find(iterator);
@@ -354,7 +365,7 @@ namespace engone {
 		
 		if(creation&OPEN_ALWAYS||creation&CREATE_ALWAYS){
 			std::string temp;
-			uint i=0;
+			int i=0;
 			int at = path.find_first_of(':');
 			if(at!=-1){
 				i = at+1;

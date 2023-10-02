@@ -2,7 +2,7 @@
 #include "stb/stb_image.h"
 
 // You should define this when compiling
-#define GLEW_STATIC
+// #define GLEW_STATIC
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #undef APIENTRY // collision with minwindef
@@ -673,12 +673,18 @@ void UIModule::render(float windowWidth, float windowHeight){
     if(!initialized){
         init();
     }
-    if(!shaderId||!vertexArrayId||!vertexBufferId||!indexBufferId) return;
+    if(!shaderId||!vertexArrayId||!vertexBufferId||!indexBufferId) {
+        printf("Oh no\n");
+        return;
+    }
     
     glUseProgram(shaderId);
     
     glDisable(GL_DEPTH_TEST);
+    glDepthFunc(GL_ALWAYS);
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  
     
     glUniform2f(location("uWindow"),windowWidth,windowHeight);
 

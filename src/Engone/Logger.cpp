@@ -4,8 +4,8 @@
 //#include "Engone/Win32Includes.h"
 
 #include "Engone/PlatformLayer.h"
-
 #include "Engone/Asserts.h"
+
 
 #include <time.h>
 #include <string.h>
@@ -48,8 +48,8 @@ namespace engone {
 		flush();
 		
 		for (auto& pair : m_threadInfos) {
-			
-			pair.second.lineBuffer.resize(0);
+			// pair.second.lineBuffer.resize(0);
+            Free(pair.second.lineBuffer_data, pair.second.lineBuffer_max);
 		}
 		m_threadInfos.clear();
 		for(auto& pair : m_logFiles){
@@ -58,17 +58,32 @@ namespace engone {
 		m_logFiles.clear();
 	}
 	char* Logger::ThreadInfo::ensure(u32 bytes) {
-		if (lineBuffer.max < lineBuffer.used + bytes + 1) { // +1 for \0
+		if (lineBuffer_max < lineBuffer_used + bytes + 1) { // +1 for \0
 			// TODO: increase by max*2x instead of used+bytes?
-			bool yes = lineBuffer.resize(lineBuffer.max*2 + 2*bytes + 1);
-			if (!yes)
-				return nullptr;
+            bool yes = false;
+            int newSize = lineBuffer_max*2 + 2*bytes + 1;
+            if(!lineBuffer_data) {
+                lineBuffer_data = (char*)Allocate(newSize);
+                if(!lineBuffer_data)
+                    return nullptr;
+                lineBuffer_used = 0;
+                lineBuffer_max = newSize;
+            } else {
+                char* ptr = (char*)Reallocate(lineBuffer_data, lineBuffer_max, newSize);
+                if(!lineBuffer_data)
+                    return nullptr;
+                lineBuffer_data = ptr;
+                lineBuffer_max = newSize;
+            }
+			// bool yes = lineBuffer.resize(lineBuffer_max*2 + 2*bytes + 1);
+			// if (!yes)
+			// 	return nullptr;
 		}
-		return ((char*)lineBuffer.data + lineBuffer.used);
+		return ((char*)lineBuffer_data + lineBuffer_used);
 	}
 	void Logger::ThreadInfo::use(u32 bytes) {
-		lineBuffer.used += bytes;
-		*((char*)lineBuffer.data + lineBuffer.used) = 0;
+		lineBuffer_used += bytes;
+		*((char*)lineBuffer_data + lineBuffer_used) = 0;
 		//printf("%s",lineBuffer.data+lineBuffer.used);
 	}
 	void Logger::enableReport(bool yes){
@@ -106,12 +121,12 @@ namespace engone {
 	}
 	void Logger::flush(){
 		auto& info = getThreadInfo();
-		if(info.lineBuffer.used==0)
+		if(info.lineBuffer_used==0)
 			return;
-		*((char*)info.lineBuffer.data+info.lineBuffer.used) = 0;
+		*((char*)info.lineBuffer_data+info.lineBuffer_used) = 0;
 		
-		char* str = (char*)info.lineBuffer.data;
-		int len = info.lineBuffer.used;
+		char* str = (char*)info.lineBuffer_data;
+		int len = info.lineBuffer_used;
 		// print((char*)info.lineBuffer.data, info.lineBuffer.used);
 
 		auto outFile = engone::GetStandardOut();
@@ -228,12 +243,12 @@ namespace engone {
 
 		// TODO: write to report
 
-		info.lineBuffer.used = 0; // flush buffer
+		info.lineBuffer_used = 0; // flush buffer
 	}
 	u64 Logger::getMemoryUsage(){
 		u64 sum=0;
 		for(auto& pair : m_threadInfos){
-			sum+=pair.second.lineBuffer.max;
+			sum+=pair.second.lineBuffer_max;
 		}
 		return sum;
 	}
@@ -246,7 +261,7 @@ namespace engone {
 		engone::FileFlushBuffers(engone::GetStandardOut());
 	}
 	void Logger::print(char* str, int len) {
-		Assert(str);
+		// Assert_platform(str);
 		if (len == 0) return;
 		
 		auto& info = getThreadInfo();
@@ -278,9 +293,10 @@ namespace engone {
 	Logger& Logger::operator<<(log::Color value) {
 		auto& inf = getThreadInfo();
 		if(inf.color!=value){
-			if(inf.lineBuffer.used){
+			if(inf.lineBuffer_used){
 				flush();
 			}
+			// SetConsoleColor(value); // can't do this with multiple threads
 			inf.color = value;
 		}
 		return *this;
@@ -362,7 +378,7 @@ namespace engone {
 		}\
 		return *this;\
 	}
-#ifdef ENGONE_GLM
+// #ifdef ENGONE_GLM
 	GEN_LOG_GEN(const glm::vec3&,60,(buf,"[%f, %f, %f]",value.x,value.y,value.z))
 	GEN_LOG_GEN(const glm::vec4&,80,(buf,"[%f, %f, %f, %f]",value.x,value.y,value.z,value.w))
 	GEN_LOG_GEN(const glm::quat&,60,(buf,"[%f, %f, %f, %f]", value.x, value.y, value.z, value.w))
@@ -372,7 +388,7 @@ namespace engone {
 		value[1].x, value[1].y, value[1].z, value[1].w,
 		value[2].x, value[2].y, value[2].z, value[2].w,
 		value[3].x, value[3].y, value[3].z, value[3].w))
-#endif // ENGONE_GLM
+// #endif // ENGONE_GLM
 
 #ifdef ENGONE_PHYSICS
 	GEN_LOG_GEN(const rp3d::Vector3&, 60, (buf, "[%f, %f, %f]", value.x, value.y, value.z))

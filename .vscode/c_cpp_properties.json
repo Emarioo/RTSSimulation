@@ -6,19 +6,24 @@
                 "${workspaceFolder}/include/*",
                 "${workspaceFolder}/libs/glew-2.1.0/include/*",
                 "${workspaceFolder}/libs/glfw-3.3.8/include/*",
-                "${workspaceFolder}/libs/stb/include/*"
+                "${workspaceFolder}/libs/stb/include/*",
+                "${workspaceFolder}/libs/glm/include/*"
             ],
             "defines": [
                 "_DEBUG",
                 "UNICODE",
                 "_UNICODE",
-                "OS_WINDOWS"
+                "OS_WINDOWS",
+                "USE_HOT_RELOAD"
             ],
             "windowsSdkVersion": "10.0.19041.0",
             "compilerPath": "cl.exe",
             "cStandard": "c17",
             "cppStandard": "c++14",
-            "intelliSenseMode": "windows-msvc-x64"
+            "intelliSenseMode": "windows-msvc-x64",
+            "forcedInclude": [
+                "include/pch.h"
+            ]
         }
     ],
     "version": 4
