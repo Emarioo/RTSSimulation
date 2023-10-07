@@ -961,6 +961,7 @@ namespace engone {
 	uint32_t Mutex::getOwner() {
 		return m_ownerThread;
 	}
+	
 	void Thread::cleanup() {
 		if (m_internalHandle) {
 			if (m_threadId == GetThisThreadId()) {

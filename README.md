@@ -8,3 +8,5 @@ A project that focuses on these:
 - One executable
 
 Inspiration from StarCraft 2
+![](docs/img/game.png)
+![](docs/img/code-flow.png)

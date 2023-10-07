@@ -55,17 +55,68 @@ void SetupRendering(GameState* gameState){
 
     gameState->cubeShader.init(vs_CubeShaderGLSL);
 }
-
+u32 UpdateThread(void*);
+u32 RenderThread(void*);
 void StartGame() {
     using namespace engone;
-    // fprintf(stderr, "fast\n");
-    // log::out << "Start game!\n";
-
+    
+    GameState* gameState = GameState::Create();
+    // gameState->world = World::CreateTest(&gameState->registries);
+    gameState->world = World::CreateFromImage(&gameState->registries, "assets/world/base-0.png");
+    gameState->camera.setPosition(2,4,5);
+    gameState->camera.setRotation(0.3f,1.57f,0);
+    
+    // gameState->updateThread.init(UpdateThread, gameState);
+    
+    RenderThread(gameState);
+    
+    // gameState->updateThread.join();
+    GameState::Destroy(gameState);
+}
+u32 UpdateThread(void * arg) {
+    using namespace engone;
+    GameState* gameState = (GameState*)arg;
+    
+    auto lastTime = engone::StartMeasure();
+    auto gameStartTime = engone::StartMeasure();
+    double updateAccumulation = 0;
+    double sec_timer = 0;
+    double reloadTime = 0;
+    while (gameState->isRunning) {
+        auto now = engone::StartMeasure();
+        double frame_deltaTime = DiffMeasure(now - lastTime);
+        lastTime = now;
+        
+        if(gameState->activeUpdateProc != gameState->inactiveUpdateProc) {
+            gameState->activeUpdateProc = gameState->inactiveUpdateProc;
+        }
+        
+        updateAccumulation += frame_deltaTime;
+        if(gameState->activeUpdateProc) {
+            while(updateAccumulation > gameState->update_deltaTime){
+                updateAccumulation -= gameState->update_deltaTime;
+                gameState->activeUpdateProc(gameState);
+            }
+        }
+        // gameState->inputModule.resetEvents(true);
+        // gameState->inputModule.resetPollChar();
+        // gameState->inputModule.m_lastMouseX = gameState->inputModule.m_mouseX;
+        // gameState->inputModule.m_lastMouseY = gameState->inputModule.m_mouseY;
+        if(updateAccumulation + 0.002 < gameState->update_deltaTime) {
+            // TODO: Is there a bug here somewhere?
+            auto sleep_start = engone::StartMeasure();
+            engone::Sleep(0.001);
+            // log::out << "Sleep: " << engone::StopMeasure(sleep_start)*1000<<", dt:" << (gameState->update_deltaTime*1000)<<", acc: "<<(updateAccumulation*1000)<<" \n";
+        }
+    }
+    
+    return 0;
+}
+u32 RenderThread(void* arg) {
+    using namespace engone;
+    GameState* gameState = (GameState*)arg;
+    
     Assert(glfwInit());
-    // if (!glfwInit()) {
-    //     log::out << "NOPE!\n";
-    //     return;
-    // }
  
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -73,7 +124,7 @@ void StartGame() {
     GLFWwindow* window = glfwCreateWindow(640, 480, "RTS Simulation", NULL, NULL);
     if (!window) {
         glfwTerminate();
-        return;
+        return 0;
     }
  
     glfwMakeContextCurrent(window);
@@ -81,7 +132,6 @@ void StartGame() {
 
     glfwSwapInterval(1); // limit fps to your monitors frequency?
 
-    GameState* gameState = GameState::Create();
     gameState->window = window;
 
     SetupRendering(gameState);
@@ -90,17 +140,18 @@ void StartGame() {
     // gameState->cubes.add({{0,-1.5,0},{0.7,0.5,1}});
     // gameState->cubes.add({{0.3,0,0},{0.1,0.1,0.1}});
 
-    gameState->world = World::CreateTest(&gameState->registries);
-
     #define HOT_RELOAD_ORIGIN "bin/game.dll"
     #define HOT_RELOAD_IN_USE "bin/hotloaded.dll"
     #define HOT_RELOAD_ORIGIN_PDB "bin/game.pdb"
     #define HOT_RELOAD_IN_USE_PDB "bin/hotloaded.pdb"
     #define HOT_RELOAD_TIME 2
 
-    GameProcedure updateProc = UpdateGame;
-    GameProcedure renderProc = RenderGame;
+    gameState->activeUpdateProc = UpdateGame;
+    gameState->activeRenderProc = RenderGame;
+    gameState->inactiveUpdateProc = UpdateGame;
+    gameState->inactiveRenderProc = RenderGame;
 
+    void* prev_hot_reload_dll = nullptr;
     void* hot_reload_dll = nullptr;
     double last_dll_write = 0;
  
@@ -113,9 +164,6 @@ void StartGame() {
 
     gameState->uiModule.init();
     gameState->inputModule.init(gameState->window);
-
-    gameState->camera.setPosition(2,4,5);
-    gameState->camera.setRotation(0.3f,3.0f,0);
 
     auto gameStartTime = engone::StartMeasure();
     double updateAccumulation = 0;
@@ -132,7 +180,6 @@ void StartGame() {
         lastTime = now;
         gameState->current_frameTime = frame_deltaTime;
 
-        updateAccumulation += frame_deltaTime;
 
         gameState->sum_frameCount++;
         gameState->sum_frameTime+=frame_deltaTime;
@@ -160,33 +207,46 @@ void StartGame() {
             if(yes && new_dll_write > last_dll_write) {
                 log::out << "Reloaded\n";
                 last_dll_write = new_dll_write;
-                if(hot_reload_dll)
-                    engone::UnloadDynamicLibrary(hot_reload_dll);
-                hot_reload_dll = nullptr;
-                engone::FileCopy(HOT_RELOAD_ORIGIN, HOT_RELOAD_IN_USE);
-                engone::FileCopy(HOT_RELOAD_ORIGIN_PDB, HOT_RELOAD_IN_USE_PDB);
-                hot_reload_dll = engone::LoadDynamicLibrary(HOT_RELOAD_IN_USE);
+                if(hot_reload_dll) {
+                    Assert(!prev_hot_reload_dll);
+                    prev_hot_reload_dll = hot_reload_dll;
+                    hot_reload_dll = nullptr;
+                }
+                // TODO: Is 256 enough?
+                char dll_path[256]{0};
+                char pdb_path[256]{0};
+                snprintf(dll_path,sizeof(dll_path),"bin/hotloaded-%d.dll", (int)rand());
+                snprintf(pdb_path,sizeof(pdb_path),"bin/hotloaded-%d.pdb", (int)rand());
+                engone::FileCopy(HOT_RELOAD_ORIGIN, dll_path);
+                engone::FileCopy(HOT_RELOAD_ORIGIN_PDB, pdb_path);
+                // engone::FileCopy(HOT_RELOAD_ORIGIN, HOT_RELOAD_IN_USE);
+                // engone::FileCopy(HOT_RELOAD_ORIGIN_PDB, HOT_RELOAD_IN_USE_PDB);
+                hot_reload_dll = engone::LoadDynamicLibrary(dll_path);
+                // hot_reload_dll = engone::LoadDynamicLibrary(HOT_RELOAD_IN_USE);
 
-                updateProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "UpdateGame");
-                renderProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "RenderGame");
+                gameState->inactiveUpdateProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "UpdateGame");
+                gameState->inactiveRenderProc = (GameProcedure)engone::GetFunctionPointer(hot_reload_dll, "RenderGame");
+                gameState->activeRenderProc = gameState->inactiveRenderProc;
             }
         }
-        // #else
-        // UpdateGame(gameState);
-        // RenderGame(gameState);
+        // TODO: Mutex on game proc
+        if(gameState->activeUpdateProc == gameState->inactiveUpdateProc && prev_hot_reload_dll) {
+            engone::UnloadDynamicLibrary(prev_hot_reload_dll);
+            prev_hot_reload_dll = nullptr;
+        }
         #endif
-        if(updateProc){
+        if(gameState->activeUpdateProc != gameState->inactiveUpdateProc) {
+            gameState->activeUpdateProc = gameState->inactiveUpdateProc;
+        }
+        updateAccumulation += frame_deltaTime;
+        if(gameState->activeUpdateProc){
             while(updateAccumulation>gameState->update_deltaTime){
                 updateAccumulation-=gameState->update_deltaTime;
-                updateProc(gameState);
+                gameState->activeUpdateProc(gameState);
             }
-        } else {
-            // UpdateGame(gameState);
         }
-        if(renderProc) {
-            renderProc(gameState);
-        } else {
-            // RenderGame(gameState);
+        if(gameState->activeRenderProc) {
+            gameState->activeRenderProc(gameState);
         }
 
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -201,11 +261,12 @@ void StartGame() {
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+    gameState->isRunning = false;
  
     glfwDestroyWindow(window);
     glfwTerminate();
-
-    GameState::Destroy(gameState);
+    
+    return 0;
 }
 
 GAME_API void UpdateGame(GameState* gameState) {
@@ -281,7 +342,7 @@ GAME_API void RenderGame(GameState* gameState) {
 
     // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-    float speed = 3.f * gameState->current_frameTime;
+    float speed = 7.f * gameState->current_frameTime;
     glm::vec3 lookDir = gameState->camera.getFlatLookVector();
     glm::vec3 strafeDir = gameState->camera.getRightVector();
     glm::vec3 moveDir = {0,0,0};
@@ -326,11 +387,10 @@ GAME_API void RenderGame(GameState* gameState) {
     snprintf(str_camera, sizeof(str_camera), "camrot: %.2f, %.2f, %.2f", (float)(gameState->camera.getRotation().x),gameState->camera.getRotation().y,gameState->camera.getRotation().z);
     UI_TEXT(5,3+18,18, 1,1,1,1, str_camera)
 
-
     float ratio = gameState->winWidth / gameState->winHeight;
     glm::mat4 perspectiveMatrix = glm::mat4(1);
     if (std::isfinite(ratio))
-        perspectiveMatrix = glm::perspective(gameState->fov, ratio, gameState->zNear, gameState->zFar);
+        perspectiveMatrix = glm::perspective(glm::radians(gameState->fov), ratio, gameState->zNear, gameState->zFar);
 
     glm::mat4 viewMatrix = gameState->camera.getViewMatrix();
 
@@ -460,12 +520,21 @@ void RenderWorld(GameState* gameState, World* world) {
             int tileY = i / Chunk::TILES_PER_SIDE;
             if(tile->tileType == TILE_EMPTY)
                 continue;
-
-            glm::vec3 color = gameState->registries.getTileColor(tile->tileType);
+            
+            float pos_y = (float)tile->height / 16.f;
+            float size_y = 1.f;
+            glm::vec3 color;
+            if(tile->tileType == TILE_COLORED) {
+                pos_y = 0.f;
+                size_y = (float)tile->height / 16.f;
+                color = {tile->red/(255.f), tile->green/(255.f), tile->blue/(255.f)};
+            } else 
+                color = gameState->registries.getTileColor(tile->tileType);
+                
 
             gameState->cubeInstanceBatch[cubeCount] = {
-                (float)chunk->x + tileX, (float)tile->height / 16.f, (float)chunk->z + tileY,
-                1.f,1.f,1.f, // size
+                (float)chunk->x + tileX, pos_y, (float)chunk->z + tileY,
+                1.f,size_y,1.f, // size
                 color.r,color.g,color.b};
             cubeCount++;
             if(cubeCount == gameState->cubeInstanceBatch_max) {

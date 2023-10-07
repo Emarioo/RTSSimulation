@@ -48,13 +48,16 @@ void main() {
 	float ambientStrength = 0.1;
 
 	vec3 ambient = ambientStrength * ambientColor;
-
+    /*
 	vec3 norm = normalize(fNormal);
 	vec3 lightDir = normalize(uLightPos - fPos);
 	float diff = max(dot(norm, lightDir), 0.0);
 	vec3 diffuse = diff * lightColor;
+    */
 	
-	vec3 result = (ambient + diffuse) * fColor;
+	// vec3 result = (ambient + diffuse) * fColor;
+    
+	vec3 result = fColor;
 
 	oColor = vec4(result, 1.0);
 	//oColor = vec4(lightDir, 1.0);

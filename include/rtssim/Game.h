@@ -21,13 +21,26 @@ struct Cube {
     glm::vec3 size;
 };
 
+struct GameState;
+typedef void (*GameProcedure)(GameState* gameState);
 struct GameState {
     static GameState* Create();
     static void Destroy(GameState* gameState);
 
     // Application stuff
+    engone::Thread updateThread{};
+    // engone::Thread renderThread{};
+    // engone::Mutex 
+    
+    GameProcedure activeUpdateProc = nullptr;
+    GameProcedure activeRenderProc = nullptr;
+    GameProcedure inactiveUpdateProc = nullptr;
+    GameProcedure inactiveRenderProc = nullptr;
+    
     GLFWwindow* window=nullptr;
     float winWidth=0, winHeight=0;
+    
+    bool isRunning = true;
 
     // int prev_winX = 0, prev_winY = 0, prev_winW = 0, prev_winH = 0;
 
@@ -67,7 +80,6 @@ struct GameState {
 
     DynamicArray<u32> selectedEntities{};
 };
-typedef void (*GameProcedure)(GameState* gameState);
 
 GAME_API void RenderGame(GameState* gameState);
 GAME_API void UpdateGame(GameState* gameState);

@@ -1,4 +1,5 @@
 bin/
+logs/
 *.exe
 *.pdb
 *.dll

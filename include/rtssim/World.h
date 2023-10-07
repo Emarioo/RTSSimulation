@@ -2,6 +2,7 @@
 
 #include "Engone/Util/Array.h"
 #include "Engone/Util/BucketArray.h"
+#include "rtssim/Config.h"
 
 // The world has two parts: Tiles and entities
 //  The map is divided into chunks and tiles.
@@ -13,12 +14,14 @@
 
 enum TileType : u16 {
     TILE_EMPTY=0,
-    TILE_GRASS=1,
+    TILE_COLORED=1,
+    TILE_GRASS=2,
     TILE_STONE,
 };
 struct Tile {
     TileType tileType;
     i8 height;
+    u8 red,green,blue;
 };
 struct Chunk {
     int x, z;
@@ -46,6 +49,7 @@ struct World {
     void cleanup();
 
     static World* CreateTest(Registries* registries);
+    static World* CreateFromImage(Registries* registries, const char* path);
     static void Destroy(World* world);
 
     BucketArray<Chunk> chunks{128};
