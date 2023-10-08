@@ -9,6 +9,10 @@
 
 #include "rtssim/World.h"
 #include "rtssim/Registry.h"
+#include "rtssim/Item.h"
+
+#include "rtssim/Util/Perf.h"
+#include "rtssim/Util/LinearAllocator.h"
 
 #ifdef USE_HOT_RELOAD
 #define GAME_API extern "C" __declspec(dllexport)
@@ -20,7 +24,48 @@ struct Cube {
     glm::vec3 pos;
     glm::vec3 size;
 };
-
+struct Particle {
+    glm::vec3 pos;
+    glm::vec3 vel;
+    glm::vec3 color;
+    float size;
+    float lifeTime;
+};
+struct TeamResources {
+    // int wood = 10;
+    // int stone = 10;
+    // int iron = 10;
+    DynamicArray<Item> resources;
+    // int teamItems_amount[ITEM_TYPE_MAX];
+    
+    void addItem(ItemType type, int amount) {
+        for(int i=0;i<resources.size();i++){
+            if(type == resources[i].type) {
+                resources[i].amount += amount;
+                return;
+            }
+        }
+        resources.add({type, amount});
+        return;
+    }
+    int getAmount(ItemType type) {
+        for(int i=0;i<resources.size();i++){
+            if(type == resources[i].type)
+                return resources[i].amount;
+        }
+        return 0;
+    }
+    void removeItem(ItemType type, int amount) {
+        for(int i=0;i<resources.size();i++){
+            if(type == resources[i].type) {
+                resources[i].amount -= amount;
+                if(resources[i].amount < 0)
+                    resources[i].amount = 0;
+                break;
+            }
+        }
+    }
+};
 struct GameState;
 typedef void (*GameProcedure)(GameState* gameState);
 struct GameState {
@@ -60,25 +105,57 @@ struct GameState {
     u32 cubeInstanceBatch_max = 0;
     CubeInstance* cubeInstanceBatch = nullptr;
     DynamicArray<Cube> cubes{};
+    int cubesToDraw = 0;
 
     engone::Shader cubeShader{};
     float fov = 90.f, zNear = 0.1f, zFar = 400.f;
     engone::Camera camera{};
 
     engone::UIModule uiModule{};
+    
+    // update code SHOULD NOT USE THIS ALLOCATOR!
+    LinearAllocator stringAllocator_render{};
 
     double update_deltaTime = 1.0f/60.0f; // fixed
     double current_frameTime = 1.0f/60.0f;
-    double sum_frameTime = 0;
-    int sum_frameCount = 0;
-    double avg_frameTime = 0.016;
+    
+    AvgValue<double> avg_frameTime{30};
     double game_runtime = 0;
+
+    AvgValue<float> avg_updateTime{30};
+    
+    bool use_area_select = false;
+    glm::vec3 area_select_start{};
 
     // Actual game
     Registries registries{};
     World* world = nullptr;
 
+    float gravity_acc = 7.f;    
+    DynamicArray<Particle> particles{};
+    void addParticle(const Particle& particle);
+
     DynamicArray<u32> selectedEntities{};
+    
+    EntityType blueprintType = ENTITY_NONE;
+    
+    TeamResources teamResources{};
+    
+    static const glm::vec3 MSG_COLOR_RED;
+    bool hasSufficientResources(EntityType entityType, bool useResources = false, bool logMissingResources = false);
+    
+    struct Message {
+        std::string log{};
+        float lifetime;
+        glm::vec3 color;
+    };
+    DynamicArray<Message> messages{};
+    void addMessage(const std::string& text, float time, const glm::vec3& color = {1.f,1.f,1.f});
+    
+    struct EntityCost {
+        int amounts[ITEM_TYPE_MAX]{0};
+    };
+    EntityCost entityCosts[ENTITY_TYPE_MAX]{};
 };
 
 GAME_API void RenderGame(GameState* gameState);

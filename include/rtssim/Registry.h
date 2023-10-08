@@ -1,20 +1,25 @@
 #pragma once
 
 #include "Engone/Util/Array.h"
+#include "rtssim/World.h"
 
 struct EntityAction {
     enum Type : u32 {
         ACTION_MOVE,
+        ACTION_GATHER,
     };
     Type actionType;
-    union {
-        glm::vec3 movePosition;
-    };
+    glm::vec3 targetPosition;
+    TileType gatherMaterial;
+    int grid_x,grid_z;
 };
 
 // per entity instance
 struct EntityData {
     DynamicArray<EntityAction> actionQueue{};
+    bool gathering = false;
+    bool dropResource = false;
+    float gatherTime = 0;
 };
 // per entity type
 struct EntityStats {

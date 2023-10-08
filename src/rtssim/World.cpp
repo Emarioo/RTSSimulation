@@ -7,6 +7,26 @@
 
 #include "stb/stb_image.h"
 
+static const char* tile_names[TILE_TYPE_MAX] {
+    "Empty",
+    "Terrain",
+    "Stone",
+    "Wood",
+    "Iron",
+};
+const char* ToString(TileType tileType) {
+    return tile_names[tileType];
+}
+static const char* entity_names[ENTITY_TYPE_MAX] {
+    "None",
+    "Worker",
+    "Soldier",
+    "Training Hall",
+};
+const char* ToString(EntityType entityType) {
+    return entity_names[entityType];
+}   
+
 void World::cleanup() {
     using namespace engone;
     log::out << log::YELLOW << "World cleanup not implemented\n";
@@ -26,7 +46,10 @@ World* World::CreateTest(Registries* registries) {
     int prevHeight = 0;
     for(int i=0;i<sizeof(chunk->tiles)/sizeof(*chunk->tiles);i++){
         Tile* tile = chunk->tiles + i;
-        tile->tileType = TILE_GRASS;
+        tile->tileType = TILE_TERRAIN;
+        tile->green = 160 + rand()%50;
+        tile->red = 10;
+        tile->blue = 20;
         tile->height = prevHeight;
 
         prevHeight += rand()%3-1;
@@ -38,8 +61,9 @@ World* World::CreateTest(Registries* registries) {
         u32 entityIndex = world->entities.add(nullptr, &entity);
 
         entity->entityType = ENTITY_WORKER;
-        entity->x = i*1.5;
-        entity->z = 1.5 * (i%5);
+        entity->pos.x = i*1.5;
+        entity->pos.y = 0;
+        entity->pos.z = 1.5 * (i%5);
         EntityData* data;
         entity->extraData = world->registries->registerEntityData(&data);
     }
@@ -53,17 +77,26 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
 
     world->registries = registries;
     
-    int img_width, img_height, channels;
-    u8* img_data = stbi_load(path, &img_width, &img_height, &channels, 4);
+    char path_heightMap[256];
+    char path_colorMap[256];
+    snprintf(path_heightMap,sizeof(path_heightMap), "%s-height.png", path);
+    snprintf(path_colorMap,sizeof(path_colorMap), "%s-color.png", path);
     
-    _LOG_WORLD_CREATION(log::out << log::LIME << "Creating world ("<<path<<", "<<img_width<<"x"<<img_height<<")\n")
-
+    int img_width, img_height, channels;
+    int img2_width, img2_height, channels2;
+    u8* color_map = stbi_load(path_colorMap, &img_width, &img_height, &channels, 4);
+    u8* height_map = stbi_load(path_heightMap, &img2_width, &img2_height, &channels2, 4);
+    Assert(color_map && height_map);
+    Assert(img_width == img2_width && img_height == img2_height);
+    Assert((channels == 3 || channels == 4) && (channels2 == 3 || channels2 == 4));
+    
     // how many chunks do we need?
     int totalTiles = img_width * img_height;
     int xChunks = ceilf((float)img_width / Chunk::TILES_PER_SIDE);
     int yChunks = ceilf((float)img_height / Chunk::TILES_PER_SIDE);
     int totalChunks = ceilf((float)img_width / Chunk::TILES_PER_SIDE) * ceilf((float)img_height / Chunk::TILES_PER_SIDE);
     
+    _LOG_WORLD_CREATION(log::out << log::LIME << "Creating world ("<<path<<", "<<img_width<<"x"<<img_height<<")\n")
     _LOG_WORLD_CREATION(log::out << log::LIME << " Tiles: "<<totalTiles<<", Chunks: "<<totalChunks<<"\n")
 
     int world_offset_x = 0;
@@ -93,26 +126,56 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
                     } rgba;
                     
                     if(channels == 4) {
-                        rgba.b =  img_data[(tile_y * img_width + tile_x)*4 + 0];
-                        rgba.g =  img_data[(tile_y * img_width + tile_x)*4 + 1];
-                        rgba.r =  img_data[(tile_y * img_width + tile_x)*4 + 2];
-                        rgba.a =  img_data[(tile_y * img_width + tile_x)*4 + 3];
+                        rgba.r =  color_map[(tile_y * img_width + tile_x)*4 + 0];
+                        rgba.g =  color_map[(tile_y * img_width + tile_x)*4 + 1];
+                        rgba.b =  color_map[(tile_y * img_width + tile_x)*4 + 2];
+                        rgba.a =  color_map[(tile_y * img_width + tile_x)*4 + 3];
                     } else {
-                        rgba.b =  img_data[(tile_y * img_width + tile_x)*4 + 0];
-                        rgba.g =  img_data[(tile_y * img_width + tile_x)*4 + 1];
-                        rgba.r =  img_data[(tile_y * img_width + tile_x)*4 + 2];
+                        rgba.r =  color_map[(tile_y * img_width + tile_x)*4 + 0];
+                        rgba.g =  color_map[(tile_y * img_width + tile_x)*4 + 1];
+                        rgba.b =  color_map[(tile_y * img_width + tile_x)*4 + 2];
                         rgba.a = 255;
                     }
                     
                     Tile* tile = chunk->tiles + y * Chunk::TILES_PER_SIDE + x;
-                    tile->tileType = TILE_COLORED;
+                    tile->tileType = TILE_TERRAIN;
+                    
+                    {
+                        int nodex = 12;
+                        int nodey = 4;
+                        int dist = (nodex-tile_x) * (nodex-tile_x) + (nodey-tile_y) * (nodey-tile_y)/2;
+                        if(dist < 4*4) {
+                            if(rand()%10 < 8) {
+                                tile->tileType = TILE_WOOD;
+                                tile->amount = 5;
+                            }
+                        }
+                    }
+                    {
+                        int nodex = 4;
+                        int nodey = 15;
+                        int dist = (nodex-tile_x) * (nodex-tile_x)/4 + (nodey-tile_y) * (nodey-tile_y);
+                        if(dist < 6*6) {
+                            if(rand()%10 < 8) {
+                                tile->tileType = TILE_STONE;
+                                tile->amount = 3;
+                            }
+                        }
+                    }
+                    
                     tile->green = rgba.g;
                     tile->red = rgba.r;
                     tile->blue = rgba.b;
                     
+                    if(channels2 == 4) {
+                        tile->height = height_map[(tile_y * img_width + tile_x)*4 + 2]-128;
+                    } else {
+                        tile->height = height_map[(tile_y * img_width + tile_x)*4 + 2]-128;
+                    }
+                    
                     // log::out << " "<<tile_x<<"."<<tile_y<<": "<<rgba.r<<", "<<rgba.g<<" "<<rgba.b << " "<<rgba.a<<"\n";
-                    int t = tile->green / 64;
-                    tile->height = 255 - t * 64;
+                    // int t = tile->green / 64;
+                    // tile->height = 255 - t * 64;
                     // tile->height = 255 - tile->green;
                     // tile->height = prevHeight;
                     // prevHeight += rand()%3-1;
@@ -121,7 +184,8 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
         }
     }
     
-    stbi_image_free(img_data);
+    stbi_image_free(color_map);
+    stbi_image_free(height_map);
 
     int workerCount = 4;
     for(int i=0;i<workerCount;i++){
@@ -129,8 +193,9 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
         u32 entityIndex = world->entities.add(nullptr, &entity);
 
         entity->entityType = ENTITY_WORKER;
-        entity->x = i*1.5;
-        entity->z = 1.5 * (i%5);
+        entity->pos.x = i*1.5;
+        entity->pos.y = 0;
+        entity->pos.z = 1.5 * (i%5);
         EntityData* data;
         entity->extraData = world->registries->registerEntityData(&data);
     }
@@ -148,11 +213,11 @@ u32 World::raycast(glm::vec3 rayPos, glm::vec3 rayDir, float maxRayDistance) {
     while(entities.iterate(entityIterator)) {
         Entity* entity = entityIterator.ptr;
 
-        glm::vec3 pos = {entity->x, 1, entity->z}; // TODO: Don't assume 1 as Y position!
+        glm::vec3 pos = entity->pos;
         EntityStats* stats = registries->getEntityStats(entity->entityType);
         glm::vec3 size = stats->size;
 
-        float radius = 0.5f;
+        float radius = glm::length(size/2.f); // TODO: Calculate this once and store it per entity type.
 
         float distance = 0;
         bool hit = glm::intersectRaySphere(rayPos, glm::normalize(rayDir), pos + glm::vec3(1.f,1.f,1.f)/2.f, radius, distance);
@@ -165,6 +230,59 @@ u32 World::raycast(glm::vec3 rayPos, glm::vec3 rayDir, float maxRayDistance) {
     }
     return entityIndex;
 }
+Tile* World::tileFromWorldPosition(float world_x, float world_z, int& grid_x, int& grid_z){
+    // #define grid(x) ((x)<0 ? -ceilf(-(x) / 16) : (x) / 16 )
+    // #define pri(x) printf("%f -> %d\n",x,(int)(grid(x)));
+    
+    grid_x = world_x / TILE_SIZE_IN_WORLD;
+    grid_z = world_z / TILE_SIZE_IN_WORLD;
+    
+    int chunk_x = grid_x < 0 ? -ceilf((-grid_x) / (float)Chunk::TILES_PER_SIDE) : grid_x / (float)Chunk::TILES_PER_SIDE;
+    int chunk_z = grid_z < 0 ? -ceilf((-grid_z) / (float)Chunk::TILES_PER_SIDE) : grid_z / (float)Chunk::TILES_PER_SIDE;
+    chunk_x *= Chunk::TILES_PER_SIDE;
+    chunk_z *= Chunk::TILES_PER_SIDE;
+    
+    int tile_x = grid_x % Chunk::TILES_PER_SIDE;
+    if(tile_x < 0) tile_x += Chunk::TILES_PER_SIDE;
+    int tile_z = grid_z % Chunk::TILES_PER_SIDE;
+    if(tile_z < 0) tile_z += Chunk::TILES_PER_SIDE;
+    
+    BucketArray<Chunk>::Iterator iterator{};
+    while(chunks.iterate(iterator)){
+        Chunk* chunk = iterator.ptr;
+        
+        if(chunk->x != chunk_x || chunk->z != chunk_z) 
+            continue;
+            
+        Tile* tile = chunk->tiles + tile_z * Chunk::TILES_PER_SIDE + tile_x;
+        return tile;
+    }
+    return nullptr;
+}
+Tile* World::tileFromGridPosition(int grid_x, int grid_z){
+    int chunk_x = grid_x < 0 ? -ceilf((-grid_x) / (float)Chunk::TILES_PER_SIDE) : grid_x / (float)Chunk::TILES_PER_SIDE;
+    int chunk_z = grid_z < 0 ? -ceilf((-grid_z) / (float)Chunk::TILES_PER_SIDE) : grid_z / (float)Chunk::TILES_PER_SIDE;
+    chunk_x *= Chunk::TILES_PER_SIDE;
+    chunk_z *= Chunk::TILES_PER_SIDE;
+    
+    int tile_x = grid_x % Chunk::TILES_PER_SIDE;
+    if(tile_x < 0) tile_x += Chunk::TILES_PER_SIDE;
+    int tile_z = grid_z % Chunk::TILES_PER_SIDE;
+    if(tile_z < 0) tile_z += Chunk::TILES_PER_SIDE;
+    
+    BucketArray<Chunk>::Iterator iterator{};
+    while(chunks.iterate(iterator)){
+        Chunk* chunk = iterator.ptr;
+        
+        if(chunk->x != chunk_x || chunk->z != chunk_z) 
+            continue;
+            
+        Tile* tile = chunk->tiles + tile_z * Chunk::TILES_PER_SIDE + tile_x;
+        return tile;
+    }
+    return nullptr;
+}
+        
 
 void World::Destroy(World* world) {
     world->~World();

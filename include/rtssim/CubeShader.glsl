@@ -45,19 +45,31 @@ void main() {
 	//vec3 ambientColor = vec3(0.1,0.5,0.33);
 	vec3 ambientColor = vec3(0.1,0.1,0.1);
 	vec3 lightColor = vec3(1.0, 1.0, 1.0);
-	float ambientStrength = 0.1;
+	float ambientStrength = 0.3;
+    
+    vec3 sunLightColor = vec3(1.0,1.0,1.0);
+    vec3 sunLightDir = normalize(vec3(0.5,-1.0,0.5));
 
 	vec3 ambient = ambientStrength * ambientColor;
-    /*
-	vec3 norm = normalize(fNormal);
-	vec3 lightDir = normalize(uLightPos - fPos);
-	float diff = max(dot(norm, lightDir), 0.0);
-	vec3 diffuse = diff * lightColor;
-    */
-	
-	// vec3 result = (ambient + diffuse) * fColor;
     
-	vec3 result = fColor;
+    vec3 result = vec3(0,0,0);
+    {
+        result += ambient;
+    }
+    {
+        vec3 norm = normalize(fNormal);
+        float diff = max(dot(norm, -sunLightDir), 0.0);
+        vec3 diffuse = diff * sunLightColor;
+        result += diffuse;
+    }
+    /*{
+        vec3 norm = normalize(fNormal);
+        vec3 lightDir = normalize(uLightPos - fPos);
+        float diff = max(dot(norm, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor;
+        result += diffuse;
+    }*/
+	result = result * fColor;
 
 	oColor = vec4(result, 1.0);
 	//oColor = vec4(lightDir, 1.0);
