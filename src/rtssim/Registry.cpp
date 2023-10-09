@@ -4,7 +4,7 @@
 
 static EntityStats s_entityStats[]{
     {{ 1,1,1}, {1,1,1 }, 1.0f}, // none
-    {{ 0.01f, 0.3f, 0.92f }, {0.4f, 1.2f, 0.4f }, 1.7f}, // worker
+    {{ 0.01f, 0.3f, 0.92f }, {0.4f, 1.2f, 0.4f }, 2.4f}, // worker
     {{ 0.1f, 0.1f, 0.7f }, { 0.6f, 0.7f, 0.6f }, 1.5f}, // soldier
     {{ 0.8f, 0.5f, 0.3f }, { 3.f, 2.f, 3.f }, 1.5f}, // working hall
 };

@@ -50,6 +50,22 @@ namespace engone {
 			look.z = -sin(rotation.y);
 			return look;
 		}
+        
+        glm::vec3 directionFromMouse(int mouseX, int mouseY, int winWidth, int winHeight, const glm::mat4& perspectiveMatrix) {
+            // https://gamedev.stackexchange.com/questions/200114/constructing-a-world-ray-from-mouse-coordinates
+            // screen/window space
+            float screen_x = (float)mouseX / winWidth * 2.f - 1.f;
+            float screen_y = 1.f - (float)mouseY / winHeight * 2.f;
+            glm::vec4 screen_point = glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
+
+            glm::mat4 viewMatrix_without_position = glm::inverse(
+				glm::rotate(rotation.y, glm::vec3(0, 1, 0)) *
+				glm::rotate(rotation.x, glm::vec3(1, 0, 0))
+			);
+            glm::vec3 ray_dir = glm::inverse(viewMatrix_without_position) * (glm::inverse(perspectiveMatrix) * screen_point);
+            ray_dir = glm::normalize(ray_dir);
+            return ray_dir;
+        }
 
 	private:
 		glm::vec3 position{};

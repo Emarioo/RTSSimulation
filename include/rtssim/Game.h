@@ -85,6 +85,8 @@ struct GameState {
     GLFWwindow* window=nullptr;
     float winWidth=0, winHeight=0;
     
+    bool locked_fps = true;
+    
     bool isRunning = true;
 
     // int prev_winX = 0, prev_winY = 0, prev_winW = 0, prev_winH = 0;
@@ -132,7 +134,7 @@ struct GameState {
     World* world = nullptr;
 
     float gravity_acc = 7.f;    
-    DynamicArray<Particle> particles{};
+    DynamicArray<Particle> particles{}; // TODO: Optimize with a bucket array and a stack array to keep track of empty spots.
     void addParticle(const Particle& particle);
 
     DynamicArray<u32> selectedEntities{};
@@ -143,6 +145,7 @@ struct GameState {
     
     static const glm::vec3 MSG_COLOR_RED;
     bool hasSufficientResources(EntityType entityType, bool useResources = false, bool logMissingResources = false);
+    bool refundResources(EntityType entityType);
     
     struct Message {
         std::string log{};
@@ -156,6 +159,18 @@ struct GameState {
         int amounts[ITEM_TYPE_MAX]{0};
     };
     EntityCost entityCosts[ENTITY_TYPE_MAX]{};
+    
+    struct TrainingEntry {
+        EntityType type;
+        glm::vec3 target_position;
+        float remaining_time;
+        u32 responsible_entityIndex; // id/index of training hall/building
+    };
+    DynamicArray<TrainingEntry> trainingQueue{};
+    
+    bool trainUnit(EntityType entityType, const glm::vec3& target);
+    
+    DynamicArray<u32> training_halls{}; // entity index
 };
 
 GAME_API void RenderGame(GameState* gameState);
@@ -165,5 +180,3 @@ void StartGame();
 void FirstPersonProc(GameState* gameState);
 
 void RenderWorld(GameState* gameState, World* world);
-
-glm::vec3 RaycastFromMouse(int mx, int my, int winWidth, int winHeight, const glm::mat4& viewMatrix, const glm::mat4& perspectiveMatrix);

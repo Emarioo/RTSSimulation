@@ -159,8 +159,11 @@ u32 RenderThread(void* arg) {
     glfwMakeContextCurrent(window);
     glewInit();
 
-    glfwSwapInterval(1); // limit fps to your monitors frequency?
-
+     if(gameState->locked_fps) 
+        glfwSwapInterval(1); // limit fps to your monitors frequency?
+    else
+        glfwSwapInterval(0);
+        
     gameState->window = window;
 
     SetupRendering(gameState);
@@ -198,7 +201,7 @@ u32 RenderThread(void* arg) {
     double updateAccumulation = 0;
     double sec_timer = 0;
     double reloadTime = 0;
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(window)) {    
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
         gameState->winWidth = width;
@@ -306,6 +309,80 @@ void CreateParticleExplosion(GameState* gameState, int gridx, int gridy, Tile* t
 GAME_API void UpdateGame(GameState* gameState) {
     auto update_start = engone::StartMeasure();
     
+    // TODO: If a training hall is removed while a unit is being trained, we must give the responsibility of training the unit
+    //  to another training hall.
+    // TODO: What do we do when there are no training halls. We should probably send a message when we notice
+    //  that there are zero training halls if the training queue isn't empty. We don't want to spam messages though.
+    
+    // First loop will decrease time and potentially add entities and free training halls
+    for(int i = 0;i < gameState->trainingQueue.size();i++) {
+        GameState::TrainingEntry& entry = gameState->trainingQueue[i];
+        if(entry.responsible_entityIndex != -1) {
+            entry.remaining_time -= gameState->update_deltaTime;
+            if(entry.remaining_time < 0) {
+                Entity* entity;
+                u32 entityIndex = gameState->world->entities.add(nullptr, &entity);
+                entity->entityType = entry.type;
+                
+                Entity* training_entity = gameState->world->entities.get(entry.responsible_entityIndex);
+                EntityData* training_data = gameState->registries.getEntityData(training_entity->extraData);
+                training_data->busyTraining = false;
+                
+                entity->pos = training_entity->pos;
+                entity->pos.x = floorf((entity->pos.x) / TILE_SIZE_IN_WORLD);
+                entity->pos.y = floorf((entity->pos.y) / TILE_SIZE_IN_WORLD);
+                entity->pos.z = floorf((entity->pos.z) / TILE_SIZE_IN_WORLD);
+                
+                if(entity->entityType == ENTITY_WORKER || entity->entityType == ENTITY_SOLDIER) {
+                    EntityData* data;
+                    entity->extraData = gameState->world->registries->registerEntityData(&data);
+                    
+                    EntityAction action{};
+                    action.actionType = EntityAction::ACTION_MOVE;
+                    action.targetPosition = entry.target_position;
+                    action.targetPosition.x = floorf((action.targetPosition.x) / TILE_SIZE_IN_WORLD);
+                    action.targetPosition.y = floorf((action.targetPosition.y) / TILE_SIZE_IN_WORLD);
+                    action.targetPosition.z = floorf((action.targetPosition.z) / TILE_SIZE_IN_WORLD);
+                    data->actionQueue.add(action);
+                }
+                
+                gameState->trainingQueue.removeAt(i);
+                i--;
+            }
+        }
+    }
+    // Second loop will train new entities in the training halls that weren't busy before BUT more importantly, the ones who were just freed by the first loop.
+    //  Without the second loop, we may end up with non-busy training halls and units that can't be trained because there were no available halls even though we do at the end of the loop.
+    for(int i = 0;i < gameState->trainingQueue.size();i++) {
+        GameState::TrainingEntry& entry = gameState->trainingQueue[i];
+        if(entry.responsible_entityIndex == -1) {
+            // find training hall to train in
+            float min_distance = -1;
+            u32 min_entityIndex = -1;
+            bool found=false;
+            EntityData* min_data = nullptr;
+            for(u32 entityIndex : gameState->training_halls){
+                Entity* entity = gameState->world->entities.get(entityIndex);
+                Assert(entity && entity->entityType == ENTITY_TRAINING_HALL);
+                
+                EntityData* data = gameState->world->registries->getEntityData(entity->extraData);
+                if(data->busyTraining)
+                    continue;
+                float dist = glm::length(entry.target_position - entity->pos);
+                if(dist < min_distance || min_entityIndex == -1) {
+                    min_distance = dist;
+                    min_entityIndex = entityIndex;
+                    min_data = data;
+                }
+            }
+            if(min_entityIndex != -1) {
+                entry.responsible_entityIndex = min_entityIndex;
+                min_data->busyTraining = true;
+            }
+        }
+     }
+    
+    
     BucketArray<Entity>::Iterator iterator{};
     while(gameState->world->entities.iterate(iterator)) {
         Entity* entity = iterator.ptr;
@@ -335,9 +412,118 @@ GAME_API void UpdateGame(GameState* gameState) {
                     break;
                 }
                 case EntityAction::ACTION_GATHER: {
-                    // if(data->dropResource) {
+                    pos.y = action.targetPosition.y;
+                    float length = glm::length(action.targetPosition - pos);
+                    float moveLength = stats->moveSpeed * gameState->update_deltaTime;
+                    glm::vec3 moveDir = glm::normalize(action.targetPosition - pos) * moveLength;
+                    if(length < moveLength) {
+                        // completedAction = true;
+                        entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - action.targetPosition.y,0);
+                        if(data->gathering)
+                            data->gatherTime += gameState->update_deltaTime;
+                            
+                        float gatherTime = 0.2f;
+                        if(data->gatherTime > gatherTime) {
+                            data->gatherTime -= gatherTime;
+                            Tile* tile = gameState->world->tileFromGridPosition(action.grid_x, action.grid_z);
+                            if(tile && tile->tileType == action.gatherMaterial) {
+                                ItemType itemType = TileToItem(action.gatherMaterial);
+                                gameState->teamResources.addItem(itemType, 1);
+                                
+                                tile->amount--;
+                                if(tile->amount == 0){
+                                    gameState->addMessage("Block broken at {"+std::to_string(action.grid_x) + ", "+std::to_string(action.grid_z)+"}",5.f);
+                                    CreateParticleExplosion(gameState,action.grid_x,action.grid_z,tile);
+                                    tile->tileType = TILE_TERRAIN;
+                                    
+                                    completedAction = true;
+                                }
+                            } else {
+                                completedAction = true;
+                            }
+                            if(completedAction) {
+                                action.actionType = EntityAction::ACTION_SEARCH_GATHER;
+                                completedAction = false;
+                                action.hasTarget = false;
+                            }
+                            // When gathered a resource, the worker should perhaps drop it of at a storage building or on the ground
+                            // before continuing mining. Right now, the resource is magically available to the player.
+                            // data->dropResource = true;
+                        } else {
+                            data->gathering = true;
+                            Particle part{};
+                            
+                            if(rand() % 4 == 0) {
+                                part.pos = action.targetPosition + glm::vec3(0.5,0.5,0.5) + glm::vec3(RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2));
+                                part.vel = glm::vec3(RANDOMF(-1.3,1.3), RANDOMF(3.f,5.f), RANDOMF(-1.3,1.3));
+                                part.color = gameState->registries.getTileColor(action.gatherMaterial);
+                                part.color.x += RANDOMF(-0.035,0.035);
+                                part.color.y += RANDOMF(-0.02,0.02);
+                                part.color.z += RANDOMF(-0.03,0.03);
+                                part.size = RANDOMF(0.03,0.13f);
+                                part.lifeTime = RANDOMF(0.7f,1.5f);
+                                gameState->addParticle(part);
+                            }
+                        }
+                    } else {
+                        data->gathering = false;
+                        entity->pos += moveDir;
+                    }
+                    break;
+                }
+                case EntityAction::ACTION_SEARCH_GATHER: {
+                    if(!action.hasTarget) {
+                        // find target
                         
-                    // } else {
+                        // TODO: Optimize
+                        struct Pos {
+                            int x,y;  
+                        };
+                        DynamicArray<Pos> list{}; // TODO: Don't allocate memory like this
+                        auto AddLayer = [&](int layer){
+                            int short_edge = 1 + (layer-1) * 2;
+                            int long_edge = 1 + layer * 2;
+                            for(int i=0;i<long_edge;i++) {
+                                list.add({-layer,i-layer});
+                                list.add({layer,i-layer});
+                            }
+                            for(int i=0;i<short_edge;i++) {
+                                list.add({i - (layer-1),-layer});
+                                list.add({i - (layer-1),layer});
+                            }
+                        };
+                            
+                        int layer = 1;
+                        AddLayer(layer++);
+                        int search_range = 3; // 1: one layer, 2: two layers (5x5 area)
+                        
+                        Tile* found_tile = nullptr;
+                        while(list.size()>0) {
+                            int i = RANDOMF(0,list.size()-1);
+                            int grid_x = list[i].x;
+                            int grid_z = list[i].y;
+                            grid_x += action.grid_x;
+                            grid_z += action.grid_z;
+                            
+                            Tile* tile = gameState->world->tileFromGridPosition(grid_x, grid_z);
+                            if(tile && tile->tileType == action.gatherMaterial) {
+                                found_tile = tile;
+                                action.grid_x = grid_x;
+                                action.grid_z = grid_z;
+                                action.targetPosition = glm::vec3(grid_x * TILE_SIZE_IN_WORLD,0, grid_z * TILE_SIZE_IN_WORLD);
+                                action.hasTarget = true;
+                                break;
+                            }
+                            list.removeAt(i);
+                            if(list.size() == 0 && layer <= search_range) {
+                                AddLayer(layer++);
+                            }
+                        }
+                        if(!found_tile) {
+                            completedAction = true;
+                        }
+                    } else {
+                        // move to target
                         pos.y = action.targetPosition.y;
                         float length = glm::length(action.targetPosition - pos);
                         float moveLength = stats->moveSpeed * gameState->update_deltaTime;
@@ -345,54 +531,12 @@ GAME_API void UpdateGame(GameState* gameState) {
                         if(length < moveLength) {
                             // completedAction = true;
                             entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - action.targetPosition.y,0);
-                            if(data->gathering)
-                                data->gatherTime += gameState->update_deltaTime;
-                                
-                            float gatherTime = 1.f;
-                            if(data->gatherTime > gatherTime) {
-                                data->gatherTime -= gatherTime;
-                                Tile* tile = gameState->world->tileFromGridPosition(action.grid_x, action.grid_z);
-                                if(tile && tile->tileType == action.gatherMaterial) {
-                                    ItemType itemType = TileToItem(action.gatherMaterial);
-                                    gameState->teamResources.addItem(itemType, 1);
-                                    
-                                    tile->amount--;
-                                    if(tile->amount == 0){
-                                        gameState->addMessage("Block broken at {"+std::to_string(action.grid_x) + ", "+std::to_string(action.grid_z)+"}",5.f);
-                                        CreateParticleExplosion(gameState,action.grid_x,action.grid_z,tile);
-                                        tile->tileType = TILE_TERRAIN;
-                                        
-                                        // TODO: Switch to action "ACTION_SEARCH_AND_GATHER", this includes gathering and pathfinding to a resource to gather
-                                        completedAction = true;
-                                    }
-                                } else {
-                                    // TODO: Switch to action "ACTION_SEARCH_AND_GATHER", this includes gathering and pathfinding to a resource to gather
-                                    completedAction = true;
-                                }
-                                // When gathered a resource, the worker should perhaps drop it of at a storage building or on the ground
-                                // before continuing mining. Right now, the resource is magically available to the player.
-                                // data->dropResource = true;
-                            } else {
-                                data->gathering = true;
-                                Particle part{};
-                                
-                                if(rand() % 4 == 0) {
-                                    part.pos = action.targetPosition + glm::vec3(0.5,0.5,0.5) + glm::vec3(RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2));
-                                    part.vel = glm::vec3(RANDOMF(-1.3,1.3), RANDOMF(3.f,5.f), RANDOMF(-1.3,1.3));
-                                    part.color = gameState->registries.getTileColor(action.gatherMaterial);
-                                    part.color.x += RANDOMF(-0.035,0.035);
-                                    part.color.y += RANDOMF(-0.02,0.02);
-                                    part.color.z += RANDOMF(-0.03,0.03);
-                                    part.size = RANDOMF(0.03,0.13f);
-                                    part.lifeTime = RANDOMF(0.7f,1.5f);
-                                    gameState->addParticle(part);
-                                }
-                            }
+                            action.actionType = EntityAction::ACTION_GATHER;
                         } else {
                             data->gathering = false;
                             entity->pos += moveDir;
                         }
-                    // }
+                    }
                     break;
                 }
             }
@@ -442,6 +586,14 @@ GAME_API void RenderGame(GameState* gameState) {
     using namespace engone;
     
     gameState->stringAllocator_render.reset();
+        
+    if(gameState->inputModule.isKeyPressed(GLFW_KEY_L)) {
+        gameState->locked_fps = !gameState->locked_fps;
+        if(gameState->locked_fps) 
+            glfwSwapInterval(1); // limit fps to your monitors frequency?
+        else
+            glfwSwapInterval(0);
+    }
     
     gameState->cubesToDraw = 0;
     
@@ -449,18 +601,7 @@ GAME_API void RenderGame(GameState* gameState) {
     glClearColor(0.1,0.5,0.33,1);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
-    auto& ui = gameState->uiModule;
 
-    #define UI_TEXT(X,Y,H, R,G,B,A, STR) { auto text = ui.makeText(); text->x = X; text->y = Y; text->h = H; text->color = {R,G,B,A}; text->string = STR; text->length = strlen(STR); }
-
-    static char str_fps[100];
-    snprintf(str_fps, sizeof(str_fps), "%.2f ms (%d FPS)", (float)(gameState->avg_frameTime.getAvg() * 1000), (int)(1.0/gameState->avg_frameTime.getAvg()));
-    UI_TEXT(5,3,18, 1,1,1,1, str_fps)
-    
-    std::string string = engone::FormatTime(gameState->avg_updateTime.getAvg(), true, FormatTimeMS | FormatTimeUS | FormatTimeNS);
-    static char str_upt[200];
-    snprintf(str_upt, sizeof(str_upt), "update: %s", string.c_str());
-    UI_TEXT(5,3 + 18 + 18,18, 1,1,1,1, str_upt)
 
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
@@ -524,10 +665,30 @@ GAME_API void RenderGame(GameState* gameState) {
 
     // gameState->camera.setRX(gameState->camera.getRotation().x + 0.03f * gameState->current_frameTime);
 
+    auto& ui = gameState->uiModule;
+    int layout_y = 3;
+    #define UI_TEXT(X,Y,H, R,G,B,A, STR) { auto text = ui.makeText(); text->x = X; text->y = Y; text->h = H; text->color = {R,G,B,A}; text->string = STR; text->length = strlen(STR); }
+    static char str_fps[100];
+    snprintf(str_fps, sizeof(str_fps), "%.2f ms (%d FPS)", (float)(gameState->avg_frameTime.getAvg() * 1000), (int)(1.0/gameState->avg_frameTime.getAvg()));
+    UI_TEXT(5,layout_y,18, 1,1,1,1, str_fps)
+    layout_y += 18;
+    
+    std::string string = engone::FormatTime(gameState->avg_updateTime.getAvg(), true, FormatTimeMS | FormatTimeUS | FormatTimeNS);
+    static char str_upt[200];
+    snprintf(str_upt, sizeof(str_upt), "update: %s", string.c_str());
+    UI_TEXT(5,layout_y,18, 1,1,1,1, str_upt)
+    layout_y += 18;
+    
     static char str_camera[200];
     snprintf(str_camera, sizeof(str_camera), "camrot: %.2f, %.2f, %.2f", (float)(gameState->camera.getRotation().x),gameState->camera.getRotation().y,gameState->camera.getRotation().z);
-    UI_TEXT(5,3+18,18, 1,1,1,1, str_camera)
-
+    UI_TEXT(5,layout_y,18, 1,1,1,1, str_camera)
+    layout_y += 18;
+    
+    static char str_entities[200];
+    snprintf(str_entities, sizeof(str_entities), "Entities: %d, Particles: %d", gameState->world->entities.getCount(), gameState->particles.size());
+    UI_TEXT(5,layout_y,18, 1,1,1,1, str_entities)
+    layout_y += 18;
+    
     float ratio = gameState->winWidth / gameState->winHeight;
     glm::mat4 perspectiveMatrix = glm::mat4(1);
     if (std::isfinite(ratio))
@@ -536,35 +697,32 @@ GAME_API void RenderGame(GameState* gameState) {
     glm::mat4 viewMatrix = gameState->camera.getViewMatrix();
     
     glm::vec3 hoveredWorldPosition = {0,0,0};
+    glm::vec3 mouseDirection = {0,0,0};
+    if(gameState->inputModule.isCursorLocked()) {
+        mouseDirection = gameState->camera.getLookVector();
+    } else {
+        mouseDirection = gameState->camera.directionFromMouse(gameState->inputModule.getMouseX(), gameState->inputModule.getMouseY(), gameState->winWidth, gameState->winHeight, perspectiveMatrix);
+    }
     bool validHoveredPosition = false;
     {
-        glm::vec3 dir = {0,0,0};
-        // select entity
-        if(gameState->inputModule.isCursorLocked()) {
-            dir = gameState->camera.getLookVector();
-        } else {
-            dir = RaycastFromMouse(gameState->inputModule.getMouseX(), gameState->inputModule.getMouseY(), gameState->winWidth, gameState->winHeight, viewMatrix, perspectiveMatrix);
-        }
         float planeHeight = 0.5f;
         float distance;
-        bool hit = glm::intersectRayPlane(gameState->camera.getPosition(), dir, glm::vec3(0.f,planeHeight,0.f), glm::vec3{0.f,1.f,0.f}, distance);
+        bool hit = glm::intersectRayPlane(gameState->camera.getPosition(), mouseDirection, glm::vec3(0.f,planeHeight,0.f), glm::vec3{0.f,1.f,0.f}, distance);
         if(hit){
-            hoveredWorldPosition = gameState->camera.getPosition() + dir * distance;
-            // hoveredWorldPosition.y ;
+            hoveredWorldPosition = gameState->camera.getPosition() + mouseDirection * distance;
             validHoveredPosition = true;
         }
     }
     if(gameState->inputModule.isKeyPressed(GLFW_MOUSE_BUTTON_LEFT)) {
-        u32 entityIndex = -1;
-        glm::vec3 dir = {0,0,0};
         // select entity
-        if(gameState->inputModule.isCursorLocked()) {
-            dir = gameState->camera.getLookVector();
-        } else {
-            dir = RaycastFromMouse(gameState->inputModule.getMouseX(), gameState->inputModule.getMouseY(), gameState->winWidth, gameState->winHeight, viewMatrix, perspectiveMatrix);
-        }
-        // CreateRayOfCubes(gameState, gameState->camera.getPosition(), dir, 20);
-        entityIndex = gameState->world->raycast(gameState->camera.getPosition(), dir, 20.f);
+        u32 entityIndex = -1;
+    
+        // CreateRayOfCubes(gameState, gameState->camera.getPosition(), mouseDirection, 20);
+        entityIndex = gameState->world->raycast(gameState->camera.getPosition(), mouseDirection, 500.f);
+        
+        gameState->use_area_select = true;
+        gameState->area_select_start = hoveredWorldPosition;
+        
         if(entityIndex != -1){
             Entity* entity = gameState->world->entities.get(entityIndex);
             // entity->x += 0.5;
@@ -592,8 +750,6 @@ GAME_API void RenderGame(GameState* gameState) {
             }
         } else {
             if(gameState->inputModule.isKeyDown(GLFW_KEY_LEFT_SHIFT)) {
-                gameState->use_area_select = true;
-                gameState->area_select_start = hoveredWorldPosition;
             } else {
                 for(int i=0;i<gameState->selectedEntities.size();i++){
                     Entity* entity = gameState->world->entities.get(gameState->selectedEntities[i]);
@@ -675,20 +831,40 @@ GAME_API void RenderGame(GameState* gameState) {
         if(gameState->blueprintType != ENTITY_NONE) {
             
             if(gameState->hasSufficientResources(gameState->blueprintType, true, true)) {
-                Entity* entity;
-                u32 entityIndex = gameState->world->entities.add(nullptr, &entity);
-                entity->entityType = gameState->blueprintType;
                 
-                entity->pos = hoveredWorldPosition;
-                entity->pos.x = floorf((entity->pos.x) / TILE_SIZE_IN_WORLD);
-                entity->pos.y = floorf((entity->pos.y) / TILE_SIZE_IN_WORLD);
-                entity->pos.z = floorf((entity->pos.z) / TILE_SIZE_IN_WORLD);
-                
-                if(entity->entityType == ENTITY_WORKER || entity->entityType == ENTITY_SOLDIER) {
+                if(gameState->blueprintType == ENTITY_TRAINING_HALL) {
+                    Entity* entity;
+                    u32 entityIndex = gameState->world->entities.add(nullptr, &entity);
+                    entity->entityType = gameState->blueprintType;
+                    
+                    entity->pos = hoveredWorldPosition;
+                    entity->pos.x = floorf((entity->pos.x) / TILE_SIZE_IN_WORLD);
+                    entity->pos.y = floorf((entity->pos.y) / TILE_SIZE_IN_WORLD);
+                    entity->pos.z = floorf((entity->pos.z) / TILE_SIZE_IN_WORLD);
+                    
                     EntityData* data;
                     entity->extraData = gameState->world->registries->registerEntityData(&data);
+                    data->busyTraining = false;
+                    
+                    gameState->training_halls.add(entityIndex);
+                } else {
+                    bool refund = !gameState->trainUnit(gameState->blueprintType, hoveredWorldPosition);
+                    if(refund) {
+                        gameState->refundResources(gameState->blueprintType);
+                    } else {
+                        Particle part{};
+                        part.lifeTime = 1.5f;
+                        part.size = 0.4f;
+                        part.vel = {0,4.f,0};
+                        part.color = {0.7,0.7,0.7};
+                        part.pos = hoveredWorldPosition;
+                        part.pos.x = floorf((part.pos.x) / TILE_SIZE_IN_WORLD);
+                        part.pos.y = floorf((part.pos.y) / TILE_SIZE_IN_WORLD);
+                        part.pos.z = floorf((part.pos.z) / TILE_SIZE_IN_WORLD);
+                        part.pos += (0.5f - part.size/2.f) * glm::vec3(1);
+                        gameState->addParticle(part);
+                    }
                 }
-                
                 if(!keepBlueprint) {
                     gameState->blueprintType = ENTITY_NONE;
                 }
@@ -696,6 +872,7 @@ GAME_API void RenderGame(GameState* gameState) {
         } else {
             if(validHoveredPosition){
                 CreateRayOfCubes(gameState, hoveredWorldPosition, {0.f,1.f,0.f},5);
+                // CreateRayOfCubes(gameState, gameState->camera.getPosition(), mouseDirection,20);
                     
                 int grid_x,grid_z;
                 Tile* tile = gameState->world->tileFromWorldPosition(hoveredWorldPosition.x, hoveredWorldPosition.z,grid_x,grid_z);
@@ -925,6 +1102,29 @@ void GameState::addParticle(const Particle& particle){
 void GameState::addMessage(const std::string& text, float time, const glm::vec3& color) {
     messages.add({text, time, color});
 }
+bool GameState::trainUnit(EntityType entityType, const glm::vec3& target) {
+    if(training_halls.size() == 0) {
+        addMessage("Cannot train units, place a training hall first!", 5.f, MSG_COLOR_RED);
+        return false;
+    }
+    trainingQueue.add({});
+    TrainingEntry& unit = trainingQueue.last();
+    unit.type = entityType;
+    unit.target_position = target;
+    switch(entityType) {
+        case ENTITY_WORKER: {
+            unit.remaining_time = 3.f;
+            break;
+        }
+        case ENTITY_SOLDIER: {
+            unit.remaining_time = 5.f;
+            break;
+        }
+    }
+    unit.responsible_entityIndex = -1;
+    // where the unit should be trained is decided in update function
+    return true;
+}
 bool GameState::hasSufficientResources(EntityType entityType, bool useResources, bool logMissingResources){
     bool comma = false;
     bool sufficient = true;
@@ -961,6 +1161,13 @@ bool GameState::hasSufficientResources(EntityType entityType, bool useResources,
     }
     return false;
 }
+bool GameState::refundResources(EntityType entityType){
+    for(ItemType itemType=(ItemType)(ITEM_NONE + 1);itemType<ITEM_TYPE_MAX;itemType=(ItemType)(itemType+1)){
+        int required_amount = entityCosts[entityType].amounts[itemType];
+        teamResources.addItem(itemType, required_amount);
+    }
+    return true;
+}
 void FirstPersonProc(GameState* state) {
     const float cameraSensitivity = 0.3f;
     if (state->inputModule.m_lastMouseX != -1) {
@@ -984,15 +1191,4 @@ void FirstPersonProc(GameState* state) {
             //log::out << "FIRST PERSON\n";
         }
     }
-}
-glm::vec3 RaycastFromMouse(int mx, int my, int winWidth, int winHeight, const glm::mat4& viewMatrix, const glm::mat4& perspectiveMatrix) {
-    // screen/window space
-    float screen_x = (float)mx / winWidth * 2.f - 1.f;
-    float screen_y = 1.f - (float)my / winHeight * 2.f;
-    glm::vec4 screen_point = glm::vec4(screen_x, screen_y, 1.0f, 1.0f);
-
-    glm::vec3 ray_dir = glm::inverse(viewMatrix) * (glm::inverse(perspectiveMatrix) * screen_point);
-    ray_dir = glm::normalize(ray_dir);
-    return ray_dir;
-    // https://gamedev.stackexchange.com/questions/200114/constructing-a-world-ray-from-mouse-coordinates
 }

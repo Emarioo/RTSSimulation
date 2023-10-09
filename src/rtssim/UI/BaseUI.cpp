@@ -75,6 +75,19 @@ void RenderBaseUI(GameState* gameState) {
     text->y = layout_y;
     text->x = layout_x - ui->getWidthOfText(text);
     
+    text = ui->makeText();
+    int temp_str_max = 256;
+    char* temp_str = (char*)gameState->stringAllocator_render.allocate(temp_str_max);
+        
+    snprintf(temp_str, temp_str_max, "Press 'L' for non-fixed FPS");
+    text->string = (char*)temp_str;
+    text->length = strlen(temp_str);
+    text->color = {1,1,1,1};
+    text->h = 15;
+    layout_y -= text->h;
+    text->y = layout_y;
+    text->x = layout_x - ui->getWidthOfText(text);
+    
     // #### RENDER MESSAGES
     int msg_h = 15;
     int height_of_all_messages = gameState->messages.size() * msg_h;

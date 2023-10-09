@@ -104,6 +104,19 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
     
     // int world_offset_x = img_width / 2;
     // int world_offset_y = img_height / 2;
+    
+    Tile* tile = nullptr;
+    int tile_x = 0;
+    int tile_y = 0;
+    auto ResourceCircle = [&](int center_x, int center_y, int radius, float density, TileType tileType, int amount_min, int amount_max) {
+        int dist = (center_x-tile_x) * (center_x-tile_x) + (center_y-tile_y) * (center_y-tile_y)/2;
+        if(dist < radius*radius) {
+            if((float)rand()/RAND_MAX < density) {
+                tile->tileType = tileType;
+                tile->amount = amount_min + ((float)rand()/RAND_MAX)*(amount_max - amount_min);
+            }
+        }
+    };
 
     int prevHeight = 0;
     for(int chunk_y=0;chunk_y<yChunks;chunk_y++) {
@@ -116,8 +129,8 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
             for(int y=0;y<Chunk::TILES_PER_SIDE;y++){
                 for(int x=0;x<Chunk::TILES_PER_SIDE;x++){
                     // img_x is more accurate than tile_x
-                    int tile_x = chunk_x * Chunk::TILES_PER_SIDE + x;
-                    int tile_y = chunk_y * Chunk::TILES_PER_SIDE + y;
+                    tile_x = chunk_x * Chunk::TILES_PER_SIDE + x;
+                    tile_y = chunk_y * Chunk::TILES_PER_SIDE + y;
                     if(tile_x >= img_width || tile_y >= img_height)
                         continue;
                         
@@ -137,31 +150,16 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
                         rgba.a = 255;
                     }
                     
-                    Tile* tile = chunk->tiles + y * Chunk::TILES_PER_SIDE + x;
+                    tile = chunk->tiles + y * Chunk::TILES_PER_SIDE + x;
                     tile->tileType = TILE_TERRAIN;
                     
-                    {
-                        int nodex = 12;
-                        int nodey = 4;
-                        int dist = (nodex-tile_x) * (nodex-tile_x) + (nodey-tile_y) * (nodey-tile_y)/2;
-                        if(dist < 4*4) {
-                            if(rand()%10 < 8) {
-                                tile->tileType = TILE_WOOD;
-                                tile->amount = 5;
-                            }
-                        }
-                    }
-                    {
-                        int nodex = 4;
-                        int nodey = 15;
-                        int dist = (nodex-tile_x) * (nodex-tile_x)/4 + (nodey-tile_y) * (nodey-tile_y);
-                        if(dist < 6*6) {
-                            if(rand()%10 < 8) {
-                                tile->tileType = TILE_STONE;
-                                tile->amount = 3;
-                            }
-                        }
-                    }
+                    ResourceCircle(12,5,4,0.8,TILE_WOOD,4,6);
+                    ResourceCircle(5,15,6,0.8,TILE_STONE,3,6);
+                    ResourceCircle(20,10,9,0.6,TILE_WOOD,3,6);
+                    ResourceCircle(13,30,10,0.8,TILE_STONE,3,6);
+                    
+                    if(tile->tileType != TILE_TERRAIN)
+                        tile->occupied = true;
                     
                     tile->green = rgba.g;
                     tile->red = rgba.r;
@@ -204,11 +202,10 @@ World* World::CreateFromImage(Registries* registries, const char* path) {
 }
 
 u32 World::raycast(glm::vec3 rayPos, glm::vec3 rayDir, float maxRayDistance) {
-    float shortestDistance = maxRayDistance;
+    float shortestDistance = 0.0f;
     u32 entityIndex = -1;
 
     // TODO: Optimize, quad tree of entities? ignore entities you know you won't hit?
-
     BucketArray<Entity>::Iterator entityIterator{};
     while(entities.iterate(entityIterator)) {
         Entity* entity = entityIterator.ptr;
@@ -222,12 +219,13 @@ u32 World::raycast(glm::vec3 rayPos, glm::vec3 rayDir, float maxRayDistance) {
         float distance = 0;
         bool hit = glm::intersectRaySphere(rayPos, glm::normalize(rayDir), pos + glm::vec3(1.f,1.f,1.f)/2.f, radius, distance);
         if(hit) {
-            if(shortestDistance > distance) {
+            if(shortestDistance > distance || entityIndex == -1) {
                 entityIndex = entityIterator.index;
                 shortestDistance = distance;
             }
         }
     }
+    Assert(entityIndex == -1 || shortestDistance < maxRayDistance); // ignoring max distance for now
     return entityIndex;
 }
 Tile* World::tileFromWorldPosition(float world_x, float world_z, int& grid_x, int& grid_z){

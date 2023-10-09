@@ -28,6 +28,7 @@ struct Tile {
     i8 height;
     u8 red,green,blue;
     u32 amount; // wood, stone, iron...
+    bool occupied = false; // whether collision is active for this tile
 };
 struct Chunk {
     int x, z;
