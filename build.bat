@@ -2,7 +2,7 @@
 @setlocal enabledelayedexpansion
 
 SET USE_DEBUG=1
-SET USE_HOT_RELOAD=1
+@REM SET USE_HOT_RELOAD=1
 @REM SET USE_OPTIMIZATIONS=1
 
 @REM Advapi is used for winreg which accesses the windows registry

@@ -13,6 +13,7 @@
 
 #include "rtssim/Util/Perf.h"
 #include "rtssim/Util/LinearAllocator.h"
+#include "rtssim/Pathfinding.h"
 
 #ifdef USE_HOT_RELOAD
 #define GAME_API extern "C" __declspec(dllexport)
@@ -142,6 +143,7 @@ struct GameState {
     EntityType blueprintType = ENTITY_NONE;
     
     TeamResources teamResources{};
+    Pathfinder pathfinder{};
     
     static const glm::vec3 MSG_COLOR_RED;
     bool hasSufficientResources(EntityType entityType, bool useResources = false, bool logMissingResources = false);

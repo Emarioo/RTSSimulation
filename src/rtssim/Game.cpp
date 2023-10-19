@@ -159,7 +159,7 @@ u32 RenderThread(void* arg) {
     glfwMakeContextCurrent(window);
     glewInit();
 
-     if(gameState->locked_fps) 
+    if(gameState->locked_fps) 
         glfwSwapInterval(1); // limit fps to your monitors frequency?
     else
         glfwSwapInterval(0);
@@ -380,8 +380,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                 min_data->busyTraining = true;
             }
         }
-     }
-    
+    }
     
     BucketArray<Entity>::Iterator iterator{};
     while(gameState->world->entities.iterate(iterator)) {
@@ -399,16 +398,26 @@ GAME_API void UpdateGame(GameState* gameState) {
             auto& action = data->actionQueue[0];
             switch(action.actionType) {
                 case EntityAction::ACTION_MOVE: {
-                    pos.y = action.targetPosition.y;
-                    float length = glm::length(action.targetPosition - pos);
+                    glm::vec3 target = action.targetPosition;
+
+                    // pathfind here to some other place
+                    Path* path = gameState->pathfinder.createPath_test(gameState->world, pos, action.targetPosition);
+
+                    if(path && path->points.size()>0) {
+                        target = path->points[0];
+                    }
+
+                    pos.y = target.y;
+                    float length = glm::length(target - pos);
                     float moveLength = stats->moveSpeed * gameState->update_deltaTime;
-                    glm::vec3 moveDir = glm::normalize(action.targetPosition - pos) * moveLength;
+                    glm::vec3 moveDir = glm::normalize(target - pos) * moveLength;
                     if(length < moveLength) {
                         completedAction = true;
-                        entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - action.targetPosition.y,0);
+                        entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - target.y,0);
                     } else {
                         entity->pos += moveDir;
                     }
+                    gameState->pathfinder.destroyPath(path);
                     break;
                 }
                 case EntityAction::ACTION_GATHER: {
@@ -600,8 +609,6 @@ GAME_API void RenderGame(GameState* gameState) {
     // glClearColor(1,0.5,0.33,1);
     glClearColor(0.1,0.5,0.33,1);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-
-
 
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
@@ -907,11 +914,8 @@ GAME_API void RenderGame(GameState* gameState) {
     gameState->cubeShader.bind();
 
     glm::vec3 lightPos = { glm::cos(gameState->game_runtime) * 2, 7, 2 * glm::sin(gameState->game_runtime) };
-    // gameState->cubeShader.bind();
     gameState->cubeShader.setVec3("uLightPos",lightPos);
     gameState->cubeShader.setMat4("uProj", perspectiveMatrix * gameState->camera.getViewMatrix());
-
-    // gameState->cubeVA.draw(&gameState->cubeIB);
     
     if(gameState->use_area_select) {
         GameState::CubeInstance inst;
@@ -1009,6 +1013,28 @@ GAME_API void RenderGame(GameState* gameState) {
     }
 
     RenderWorld(gameState, gameState->world);
+
+    glm::vec3 start = {0,0,0};
+    glm::vec3 end = {3,0,6};
+    
+    Path* path = gameState->pathfinder.createPath_test(gameState->world, start, end);
+    for(const glm::vec3& node : path->points) {
+        GameState::CubeInstance inst{};
+        auto stats = gameState->registries.getEntityStats(gameState->blueprintType);
+        
+        inst.sx = 0.7;
+        inst.sy = 0.2;
+        inst.sz = 0.7;
+        
+        inst.x = node.x - inst.sx / 2 + 0.5;
+        inst.y = node.y - inst.sy / 2 + 0.5;
+        inst.z = node.z - inst.sz / 2 + 0.5;
+
+        inst.r = 0.0;
+        inst.g = 0.0;
+        inst.b = 0.0;
+        DrawCube(gameState, inst);
+    }
 
     // RENDER CUBES
     for(int i=0;i<gameState->cubes.size();i++){
