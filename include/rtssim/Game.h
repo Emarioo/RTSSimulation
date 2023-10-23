@@ -8,12 +8,10 @@
 #include "Engone/InputModule.h"
 
 #include "rtssim/World.h"
-#include "rtssim/Registry.h"
 #include "rtssim/Item.h"
 
 #include "rtssim/Util/Perf.h"
 #include "rtssim/Util/LinearAllocator.h"
-#include "rtssim/Pathfinding.h"
 
 #ifdef USE_HOT_RELOAD
 #define GAME_API extern "C" __declspec(dllexport)
@@ -33,9 +31,6 @@ struct Particle {
     float lifeTime;
 };
 struct TeamResources {
-    // int wood = 10;
-    // int stone = 10;
-    // int iron = 10;
     DynamicArray<Item> resources;
     // int teamItems_amount[ITEM_TYPE_MAX];
     
@@ -96,9 +91,19 @@ struct GameState {
 
     // Rendering stuff
     struct CubeInstance {
-        float x,y,z,sx,sy,sz,r,g,b;
+        union {
+            struct {
+                float x,y,z,sx,sy,sz,r,g,b;
+            };
+            struct {
+                glm::vec3 pos;
+                glm::vec3 size;
+                glm::vec3 color;
+            };
+        };
+
     };
-    static const int CUBE_BATCH_MAX = 10;
+    static const int CUBE_BATCH_MAX = 1000;
     engone::VertexArray cubeVA{};
     engone::VertexBuffer cubeVB{};
     engone::IndexBuffer cubeIB{};
@@ -113,6 +118,7 @@ struct GameState {
     engone::Shader cubeShader{};
     float fov = 90.f, zNear = 0.1f, zFar = 400.f;
     engone::Camera camera{};
+    glm::mat4 lastPerspectiveMatrix{};
 
     engone::UIModule uiModule{};
     
@@ -130,9 +136,13 @@ struct GameState {
     bool use_area_select = false;
     glm::vec3 area_select_start{};
 
+    glm::vec3 clickedPosition{};
+
     // Actual game
-    Registries registries{};
+    // Registries registries{};
     World* world = nullptr;
+
+    float gameSpeed = 1.f;
 
     float gravity_acc = 7.f;    
     DynamicArray<Particle> particles{}; // TODO: Optimize with a bucket array and a stack array to keep track of empty spots.
@@ -143,7 +153,10 @@ struct GameState {
     EntityType blueprintType = ENTITY_NONE;
     
     TeamResources teamResources{};
-    Pathfinder pathfinder{};
+    // Pathfinder pathfinder{};
+    bool showEntityPathfinding = false;
+
+    static const int PATHFINDING_STEP_PER_SECOND = 10; // for entities
     
     static const glm::vec3 MSG_COLOR_RED;
     bool hasSufficientResources(EntityType entityType, bool useResources = false, bool logMissingResources = false);

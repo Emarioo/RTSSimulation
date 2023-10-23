@@ -22,7 +22,7 @@ ItemType TileToItem(TileType type) {
 GameState* GameState::Create(){
     GameState* state = TRACK_ALLOC(GameState);
     new(state)GameState();
-    state->stringAllocator_render.init(0x10000);
+    state->stringAllocator_render.init(0x100000);
     
     return state;
 }
@@ -80,8 +80,8 @@ void StartGame() {
     using namespace engone;
     
     GameState* gameState = GameState::Create();
-    // gameState->world = World::CreateTest(&gameState->registries);
-    gameState->world = World::CreateFromImage(&gameState->registries, "assets/world/base-0");
+    // gameState->world = World::CreateTest();
+    gameState->world = World::CreateFromImage("assets/world/base-0");
     gameState->camera.setPosition(2,4,5);
     gameState->camera.setRotation(0.3f,-1.57f,0);
     
@@ -120,7 +120,7 @@ u32 UpdateThread(void * arg) {
             gameState->activeUpdateProc = gameState->inactiveUpdateProc;
         }
         
-        updateAccumulation += frame_deltaTime;
+        updateAccumulation += frame_deltaTime * gameState->gameSpeed;
         if(gameState->activeUpdateProc) {
             while(updateAccumulation > gameState->update_deltaTime){
                 updateAccumulation -= gameState->update_deltaTime;
@@ -261,7 +261,7 @@ u32 RenderThread(void* arg) {
         if(gameState->activeUpdateProc != gameState->inactiveUpdateProc) {
             gameState->activeUpdateProc = gameState->inactiveUpdateProc;
         }
-        updateAccumulation += frame_deltaTime;
+        updateAccumulation += frame_deltaTime * gameState->gameSpeed;
         if(gameState->activeUpdateProc){
             while(updateAccumulation>gameState->update_deltaTime){
                 updateAccumulation-=gameState->update_deltaTime;
@@ -297,7 +297,7 @@ void CreateParticleExplosion(GameState* gameState, int gridx, int gridy, Tile* t
         Particle part{};
         part.pos = centerPos + glm::vec3(0.5,0.5,0.5) + glm::vec3(RANDOMF(-0.45,0.45), RANDOMF(-0.45,0.45), RANDOMF(-0.45,0.45));
         part.vel = glm::vec3(RANDOMF(-1.3,1.3), RANDOMF(0.5f,2.f), RANDOMF(-1.3,1.3));
-        part.color = gameState->registries.getTileColor(tile->tileType);
+        part.color = gameState->world->registries.getTileColor(tile->tileType);
         part.color.x += RANDOMF(-0.035,0.035);
         part.color.y += RANDOMF(-0.02,0.02);
         part.color.z += RANDOMF(-0.03,0.03);
@@ -325,7 +325,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                 entity->entityType = entry.type;
                 
                 Entity* training_entity = gameState->world->entities.get(entry.responsible_entityIndex);
-                EntityData* training_data = gameState->registries.getEntityData(training_entity->extraData);
+                EntityData* training_data = gameState->world->registries.getEntityData(training_entity->extraData);
                 training_data->busyTraining = false;
                 
                 entity->pos = training_entity->pos;
@@ -335,7 +335,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                 
                 if(entity->entityType == ENTITY_WORKER || entity->entityType == ENTITY_SOLDIER) {
                     EntityData* data;
-                    entity->extraData = gameState->world->registries->registerEntityData(&data);
+                    entity->extraData = gameState->world->registries.registerEntityData(&data);
                     
                     EntityAction action{};
                     action.actionType = EntityAction::ACTION_MOVE;
@@ -365,7 +365,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                 Entity* entity = gameState->world->entities.get(entityIndex);
                 Assert(entity && entity->entityType == ENTITY_TRAINING_HALL);
                 
-                EntityData* data = gameState->world->registries->getEntityData(entity->extraData);
+                EntityData* data = gameState->world->registries.getEntityData(entity->extraData);
                 if(data->busyTraining)
                     continue;
                 float dist = glm::length(entry.target_position - entity->pos);
@@ -388,8 +388,8 @@ GAME_API void UpdateGame(GameState* gameState) {
         
         glm::vec3 pos = entity->pos;
 
-        EntityStats* stats = gameState->registries.getEntityStats(entity->entityType);
-        EntityData* data = gameState->registries.getEntityData(entity->extraData);
+        EntityStats* stats = gameState->world->registries.getEntityStats(entity->entityType);
+        EntityData* data = gameState->world->registries.getEntityData(entity->extraData);
 
         if(!data) continue;
 
@@ -401,23 +401,81 @@ GAME_API void UpdateGame(GameState* gameState) {
                     glm::vec3 target = action.targetPosition;
 
                     // pathfind here to some other place
-                    Path* path = gameState->pathfinder.createPath_test(gameState->world, pos, action.targetPosition);
-
-                    if(path && path->points.size()>0) {
-                        target = path->points[0];
+                    // Path* path = nullptr; //gameState->world->pathfinder.createPath_test(gameState->world, pos, action.targetPosition);
+                    if(!data->path) {
+                        data->path = gameState->world->pathfinder.startPath(gameState->world, pos, action.targetPosition);
+                    }
+                    // TODO: Path should be reset when goal is reached. Or next time we move somwehere
+                    //  we need to reset path. We can do this when adding move action or 
+                    //  using some other method where we check if our target is the same. If it's different
+                    //  we may restartPath.
+                    if(!data->path->sameGoal(gameState->world, action.targetPosition)) {
+                        gameState->world->pathfinder.restartPath(data->path, gameState->world, pos, action.targetPosition);
+                    }
+                    
+                    if(!data->path->finished) {
+                        // Combine step speed with update_deltaTime, this requires a float accumulation field in EntityData.
+                        data->stepAcc += GameState::PATHFINDING_STEP_PER_SECOND * gameState->update_deltaTime;
+                        if(data->stepAcc > 1.f || GameState::PATHFINDING_STEP_PER_SECOND == -1) {
+                            int steps;
+                            if(GameState::PATHFINDING_STEP_PER_SECOND == -1) {
+                                steps = gameState->world->pathfinder.stepPath(gameState->world, data->path, -1); // calculate whole path
+                            } else {
+                                steps = gameState->world->pathfinder.stepPath(gameState->world, data->path, (int)data->stepAcc);
+                                data->stepAcc -= (int)data->stepAcc;
+                            }
+                            if(steps == 0 && !data->path->finished) {
+                                // unreachable goal, try again
+                                gameState->world->pathfinder.restartPath(data->path, gameState->world, pos, action.targetPosition);
+                            }
+                            if(data->path->finished) {
+                                data->targetPointInPath = 0;
+                            }
+                        }
                     }
 
-                    pos.y = target.y;
-                    float length = glm::length(target - pos);
-                    float moveLength = stats->moveSpeed * gameState->update_deltaTime;
-                    glm::vec3 moveDir = glm::normalize(target - pos) * moveLength;
-                    if(length < moveLength) {
-                        completedAction = true;
-                        entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - target.y,0);
+                    if(!data->path->finished) {
+                        // we must wait
                     } else {
-                        entity->pos += moveDir;
+                        if(data->path->finalPoints.size() <= data->targetPointInPath) {
+                            Assert(false);
+                        }
+                        target = data->path->finalPoints[data->targetPointInPath];
+
+                        pos.y = target.y;
+                        float length = glm::length(target - pos);
+                        float moveLength = stats->moveSpeed * gameState->update_deltaTime;
+                        glm::vec3 moveDir = glm::normalize(target - pos) * moveLength;
+                        if(length < moveLength) {
+                            data->targetPointInPath++;
+                            if(data->targetPointInPath >= data->path->finalPoints.size())
+                                data->targetPointInPath = data->path->finalPoints.size()-1;
+                            if(data->path->finalPoints.size() == data->targetPointInPath) {
+                                completedAction = true;
+                                entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - target.y,0);
+                                // TODO: We could destroy path here and let someone else use it.
+                            } else {
+                                // not reached goal yet, we move on to the next node/point in the path
+                            }
+                        } else {
+                            entity->pos += moveDir;
+                        }
                     }
-                    gameState->pathfinder.destroyPath(path);
+                    
+                    // Simple AI, walk directly towards target
+                    // glm::vec3 target = action.targetPosition;
+                    // pos.y = target.y;
+                    // float length = glm::length(target - pos);
+                    // float moveLength = stats->moveSpeed * gameState->update_deltaTime;
+                    // glm::vec3 moveDir = glm::normalize(target - pos) * moveLength;
+                    // if(length < moveLength) {
+                    //     completedAction = true;
+                    //     entity->pos = action.targetPosition + glm::vec3(0,entity->pos.y - target.y,0);
+                    //     // TODO: We could destroy path here and let someone else use it.
+
+                    // } else {
+                    //     entity->pos += moveDir;
+                    // }
                     break;
                 }
                 case EntityAction::ACTION_GATHER: {
@@ -444,6 +502,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                                     gameState->addMessage("Block broken at {"+std::to_string(action.grid_x) + ", "+std::to_string(action.grid_z)+"}",5.f);
                                     CreateParticleExplosion(gameState,action.grid_x,action.grid_z,tile);
                                     tile->tileType = TILE_TERRAIN;
+                                    tile->occupied = false;
                                     
                                     completedAction = true;
                                 }
@@ -451,9 +510,14 @@ GAME_API void UpdateGame(GameState* gameState) {
                                 completedAction = true;
                             }
                             if(completedAction) {
-                                action.actionType = EntityAction::ACTION_SEARCH_GATHER;
-                                completedAction = false;
-                                action.hasTarget = false;
+                                if(data->actionQueue.size() == 1) {
+                                    // current action is the final one
+                                    // the entity would normally be idle after this point
+                                    // instead though, we automatically search resources
+                                    action.actionType = EntityAction::ACTION_SEARCH_GATHER;
+                                    completedAction = false;
+                                    action.hasTarget = false;
+                                }
                             }
                             // When gathered a resource, the worker should perhaps drop it of at a storage building or on the ground
                             // before continuing mining. Right now, the resource is magically available to the player.
@@ -465,7 +529,7 @@ GAME_API void UpdateGame(GameState* gameState) {
                             if(rand() % 4 == 0) {
                                 part.pos = action.targetPosition + glm::vec3(0.5,0.5,0.5) + glm::vec3(RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2), RANDOMF(-0.2,0.2));
                                 part.vel = glm::vec3(RANDOMF(-1.3,1.3), RANDOMF(3.f,5.f), RANDOMF(-1.3,1.3));
-                                part.color = gameState->registries.getTileColor(action.gatherMaterial);
+                                part.color = gameState->world->registries.getTileColor(action.gatherMaterial);
                                 part.color.x += RANDOMF(-0.035,0.035);
                                 part.color.y += RANDOMF(-0.02,0.02);
                                 part.color.z += RANDOMF(-0.03,0.03);
@@ -591,6 +655,94 @@ void FlushCubeBatch(GameState* gameState) {
         gameState->cubesToDraw = 0;
     }
 }
+void DrawPathfinding(GameState* gameState, Path* path) {
+    auto& ui = gameState->uiModule;
+    if(path->finished) {
+        for(const glm::vec3& node : path->finalPoints) {
+            GameState::CubeInstance inst{};
+            
+            inst.sx = 0.7;
+            inst.sy = 0.2;
+            inst.sz = 0.7;
+            
+            inst.x = node.x - inst.sx / 2 + 0.5;
+            inst.y = node.y - inst.sy / 2 + 0.5;
+            inst.z = node.z - inst.sz / 2 + 0.5;
+
+            inst.r = 0.0;
+            inst.g = 0.03;
+            inst.b = 0.05;
+            DrawCube(gameState, inst);
+        }
+    } else {
+        // auto DrawConnection = [&](const Pathfinder::Node& node) {
+        //     if(node.prevNode == -1)
+        //         return;
+            
+        // };
+        auto DrawNode = [&](const Path::Node& node, bool visited) {
+            GameState::CubeInstance inst{};
+            inst.sx = 0.7;
+            inst.sy = 0.2;
+            inst.sz = 0.7;
+            
+            inst.x = node.x * TILE_SIZE_IN_WORLD - inst.sx / 2 + 0.5;
+            // inst.y = node.y - inst.sy / 2 + 0.5;
+            inst.y = 0;
+            inst.z = node.z * TILE_SIZE_IN_WORLD - inst.sz / 2 + 0.5;
+            
+            if(visited) {
+                inst.r = 0.8;
+                inst.g = 0.6;
+                inst.b = 0.3;
+            } else {
+                inst.r = 0.0;
+                inst.g = 0.5;
+                inst.b = 0.6;
+            }
+            // bool visible;
+            // glm::vec3 textBasePos = {inst.x+inst.sx/2, inst.y+inst.sy, inst.z+inst.sz/2};
+            // glm::vec3 coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
+            // // log::out << coord.x << " "<<coord.y << "\n";
+            // float textSize = 40.f;
+            // if(visible) {
+            //     auto costText = ui.makeText();
+            //     int len = 10;
+            //     char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
+            //     snprintf(tmp,len,"r:%d",node.remCost);
+            //     costText->string = tmp;
+            //     costText->length = strlen(tmp);
+            //     costText->color = {1.f,1.f,1.f,1.f};
+            //     costText->h = textSize / coord.z;
+            //     costText->x = coord.x - ui.getWidthOfText(costText)/2;
+            //     costText->y = coord.y + costText->h/2;
+            // }
+
+            // coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0.1,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
+            // if(visible) {
+            //     auto curCostText = ui.makeText();
+            //     int len = 10;
+            //     char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
+            //     snprintf(tmp,len,"c:%d",node.curCost);
+            //     curCostText->string = tmp;
+            //     curCostText->length = strlen(tmp);
+            //     curCostText->color = {1.f,1.f,1.f,1.f};
+            //     curCostText->h = textSize / coord.z;
+            //     curCostText->x = coord.x - ui.getWidthOfText(curCostText)/2;
+            //     curCostText->y = coord.y - curCostText->h/2;
+            // }
+
+            DrawCube(gameState, inst);
+
+        };
+        for(auto& node : path->visitedNodes) {
+            DrawNode(node, true);
+        }
+        for(auto& node : path->nearbyNodes) {
+            DrawNode(node, false);
+        }
+    }
+}
 GAME_API void RenderGame(GameState* gameState) {
     using namespace engone;
     
@@ -627,6 +779,9 @@ GAME_API void RenderGame(GameState* gameState) {
     }
     if(gameState->inputModule.isCursorLocked()) {
         FirstPersonProc(gameState);
+    }
+    if(gameState->inputModule.isKeyPressed(GLFW_KEY_U)) {
+        gameState->gameSpeed = gameState->gameSpeed == 1.f ? 3.f : 1.f;
     }
 
     // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -700,6 +855,7 @@ GAME_API void RenderGame(GameState* gameState) {
     glm::mat4 perspectiveMatrix = glm::mat4(1);
     if (std::isfinite(ratio))
         perspectiveMatrix = glm::perspective(glm::radians(gameState->fov), ratio, gameState->zNear, gameState->zFar);
+    gameState->lastPerspectiveMatrix = perspectiveMatrix;
 
     glm::mat4 viewMatrix = gameState->camera.getViewMatrix();
     
@@ -721,6 +877,10 @@ GAME_API void RenderGame(GameState* gameState) {
         }
     }
     if(gameState->inputModule.isKeyPressed(GLFW_MOUSE_BUTTON_LEFT)) {
+        if(validHoveredPosition) {
+            gameState->clickedPosition = hoveredWorldPosition;
+        }
+
         // select entity
         u32 entityIndex = -1;
     
@@ -764,7 +924,7 @@ GAME_API void RenderGame(GameState* gameState) {
                 }
                 gameState->selectedEntities.resize(0);
             }
-        }
+        }   
     }
     if(gameState->inputModule.isKeyReleased(GLFW_MOUSE_BUTTON_LEFT) && gameState->use_area_select) {
         gameState->use_area_select = false;
@@ -787,7 +947,7 @@ GAME_API void RenderGame(GameState* gameState) {
         while(gameState->world->entities.iterate(iterator)) {
             Entity* entity = iterator.ptr;
             
-            EntityStats* stats = gameState->registries.getEntityStats(entity->entityType);
+            EntityStats* stats = gameState->world->registries.getEntityStats(entity->entityType);
             Assert(stats);
             glm::vec3& pos = entity->pos;
             glm::vec3& pos_end = entity->pos + stats->size;
@@ -832,6 +992,7 @@ GAME_API void RenderGame(GameState* gameState) {
         }
         // rendering of blueprint happens further down
     }
+    
     bool clearOldActions = !gameState->inputModule.isKeyDown(GLFW_KEY_LEFT_SHIFT);
     bool keepBlueprint = gameState->inputModule.isKeyDown(GLFW_KEY_LEFT_SHIFT);
     if(gameState->inputModule.isKeyPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
@@ -850,7 +1011,7 @@ GAME_API void RenderGame(GameState* gameState) {
                     entity->pos.z = floorf((entity->pos.z) / TILE_SIZE_IN_WORLD);
                     
                     EntityData* data;
-                    entity->extraData = gameState->world->registries->registerEntityData(&data);
+                    entity->extraData = gameState->world->registries.registerEntityData(&data);
                     data->busyTraining = false;
                     
                     gameState->training_halls.add(entityIndex);
@@ -882,12 +1043,12 @@ GAME_API void RenderGame(GameState* gameState) {
                 // CreateRayOfCubes(gameState, gameState->camera.getPosition(), mouseDirection,20);
                     
                 int grid_x,grid_z;
-                Tile* tile = gameState->world->tileFromWorldPosition(hoveredWorldPosition.x, hoveredWorldPosition.z,grid_x,grid_z);
+                Tile* tile = gameState->world->tileFromWorldPosition(hoveredWorldPosition,grid_x,grid_z);
 
                 for(int i=0;i<gameState->selectedEntities.size();i++){
                     Entity* entity = gameState->world->entities.get(gameState->selectedEntities[i]);
                     if(entity->extraData != 0) {
-                        auto data = gameState->registries.getEntityData(entity->extraData);
+                        auto data = gameState->world->registries.getEntityData(entity->extraData);
                         if(clearOldActions) {
                             data->actionQueue.resize(0);
                         }
@@ -978,7 +1139,6 @@ GAME_API void RenderGame(GameState* gameState) {
         inst.z = a.z;
         DrawCube(gameState, inst);
         
-        
         // inst.sy = 0.5;
         // inst.y = a.y;
         
@@ -991,7 +1151,7 @@ GAME_API void RenderGame(GameState* gameState) {
     
     if(gameState->blueprintType != ENTITY_NONE) {
         GameState::CubeInstance inst{};
-        auto stats = gameState->registries.getEntityStats(gameState->blueprintType);
+        auto stats = gameState->world->registries.getEntityStats(gameState->blueprintType);
         
         glm::vec3 pos = hoveredWorldPosition;
         
@@ -1015,25 +1175,32 @@ GAME_API void RenderGame(GameState* gameState) {
     RenderWorld(gameState, gameState->world);
 
     glm::vec3 start = {0,0,0};
-    glm::vec3 end = {3,0,6};
+    glm::vec3 end = {floorf(gameState->clickedPosition.x),floorf(gameState->clickedPosition.y),floorf(gameState->clickedPosition.z)};
+    // glm::vec3 end = {3,0,6};
     
-    Path* path = gameState->pathfinder.createPath_test(gameState->world, start, end);
-    for(const glm::vec3& node : path->points) {
-        GameState::CubeInstance inst{};
-        auto stats = gameState->registries.getEntityStats(gameState->blueprintType);
-        
-        inst.sx = 0.7;
-        inst.sy = 0.2;
-        inst.sz = 0.7;
-        
-        inst.x = node.x - inst.sx / 2 + 0.5;
-        inst.y = node.y - inst.sy / 2 + 0.5;
-        inst.z = node.z - inst.sz / 2 + 0.5;
+    if(gameState->inputModule.isKeyPressed(GLFW_KEY_P)) {
+        gameState->showEntityPathfinding = !gameState->showEntityPathfinding;
+    }
 
-        inst.r = 0.0;
-        inst.g = 0.0;
-        inst.b = 0.0;
-        DrawCube(gameState, inst);
+    if(gameState->showEntityPathfinding) {
+        if(gameState->selectedEntities.size()==0) {
+            BucketArray<Entity>::Iterator iterator{};
+            while(gameState->world->entities.iterate(iterator)){
+                Entity* entity = iterator.ptr;
+                auto data = gameState->world->registries.getEntityData(entity->extraData);
+                if(data->path) {
+                    DrawPathfinding(gameState, data->path);
+                }
+            }
+        } else {
+            for(int i=0;i<gameState->selectedEntities.size();i++) {
+                auto entity = gameState->world->entities.get(gameState->selectedEntities[i]);
+                auto data = gameState->world->registries.getEntityData(entity->extraData);
+                if(data->path) {
+                    DrawPathfinding(gameState, data->path);
+                }
+            }
+        }
     }
 
     // RENDER CUBES
@@ -1092,7 +1259,7 @@ void RenderWorld(GameState* gameState, World* world) {
                     
                 float fore_pos_y = pos_y + size_y;
                 float fore_size_y = 1.f;
-                glm::vec3 fore_color = gameState->registries.getTileColor(tile->tileType);
+                glm::vec3 fore_color = gameState->world->registries.getTileColor(tile->tileType);
                 
                 DrawCube(gameState,{
                     (float)chunk->x + tileX, fore_pos_y, (float)chunk->z + tileY,
@@ -1107,7 +1274,7 @@ void RenderWorld(GameState* gameState, World* world) {
     while(world->entities.iterate(entityIterator)) {
         Entity* entity = entityIterator.ptr;
         
-        EntityStats* stats = gameState->registries.getEntityStats(entity->entityType);
+        EntityStats* stats = gameState->world->registries.getEntityStats(entity->entityType);
         glm::vec3 color = stats->color;
         if(entity->flags & Entity::HIGHLIGHTED) {
             color = (color + glm::vec3(0.1f,0.1f,0.1f)) * 2.f;
