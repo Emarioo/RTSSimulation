@@ -35,8 +35,8 @@ struct Path {
         int dx = (end_x - node.x);
         int dz = (end_z - node.z);
         // return abs(dx) + abs(dz); // cardinal cost (square search)
-        // return dx*dx + dz*dz; // squared magnitude cost (circular search)
-        return (int)sqrtf(dx*dx + dz*dz); // magnitude cost (slow)
+        return dx*dx + dz*dz; // squared magnitude cost (circular search, more accurate)
+        // return (int)sqrtf(dx*dx + dz*dz); // magnitude cost (slow, loss of accuracy when converting to integer)
     };
     bool sameGoal(World* world, const glm::vec3& end);
     int pathIndex = -1;

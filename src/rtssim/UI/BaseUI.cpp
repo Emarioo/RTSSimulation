@@ -88,6 +88,41 @@ void RenderBaseUI(GameState* gameState) {
     text->y = layout_y;
     text->x = layout_x - ui->getWidthOfText(text);
     
+    {
+        auto& slider = gameState->pathfindingSpeedSlider;
+       
+        slider.w = 200;
+        slider.h = 35;
+        layout_y -= slider.h;
+        slider.y = layout_y;
+        slider.x = layout_x - slider.w;
+        slider.sliderName = "Pathfinding speed";
+        slider.floaty.min = -1.f;
+        slider.floaty.max = 512.f;
+        slider.setSlidingPointer(&gameState->pathfindingSpeedValue);
+        
+        slider.render(ui, &gameState->inputModule);
+    }
+    
+    {
+        auto& slider = gameState->gameSpeedSlider;
+       
+        slider.w = 240;
+        slider.h = 35;
+        layout_y -= slider.h;
+        slider.y = layout_y;
+        slider.x = layout_x - slider.w;
+        slider.sliderName = "Game speed";
+        slider.floaty.min = 0.f;
+        slider.floaty.max = 10.f;
+        slider.setSlidingPointer(&gameState->gameSpeed);
+        if(abs(gameState->gameSpeed - 1.f) < 0.4) {
+            gameState->gameSpeed = 1;   
+        }
+        
+        slider.render(ui, &gameState->inputModule);
+    }
+    
     // #### RENDER MESSAGES
     int msg_h = 15;
     int height_of_all_messages = gameState->messages.size() * msg_h;
@@ -114,4 +149,5 @@ void RenderBaseUI(GameState* gameState) {
         layout_y -= text->h;
         ui_text->x = layout_x;
     }
+    
 }

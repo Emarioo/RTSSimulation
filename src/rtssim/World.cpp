@@ -139,7 +139,10 @@ World* World::CreateFromImage(const char* path) {
                         continue;
                         
                     struct RGBA {
-                        u8 b,g,r,a;
+                        u8 r,g,b,a;
+                        bool operator==(const RGBA& rgba) {
+                            return *(u32*)this == *(u32*)&rgba;
+                        }
                     };
                     RGBA rgba;
                     
@@ -158,10 +161,10 @@ World* World::CreateFromImage(const char* path) {
                     tile = chunk->tiles + y * Chunk::TILES_PER_SIDE + x;
                     tile->tileType = TILE_TERRAIN;
                     
-                    ResourceCircle(12,5,4,0.8,TILE_WOOD,4,6);
-                    ResourceCircle(5,15,6,0.8,TILE_STONE,3,6);
-                    ResourceCircle(20,10,9,0.6,TILE_WOOD,3,6);
-                    ResourceCircle(13,30,10,0.8,TILE_STONE,3,6);
+                    // ResourceCircle(12,5,4,0.8,TILE_WOOD,4,6);
+                    // ResourceCircle(5,15,6,0.8,TILE_STONE,3,6);
+                    // ResourceCircle(20,10,9,0.6,TILE_WOOD,3,6);
+                    // ResourceCircle(13,30,10,0.8,TILE_STONE,3,6);
                     
                     RGBA resourceData;
                     if(channels3 == 4) {
@@ -176,7 +179,11 @@ World* World::CreateFromImage(const char* path) {
                         resourceData.a = 255;
                     }
                     // if(resourceData.r == 200 && resourceData.g == 100 && resourceData.b == 20) {
-                    if(resourceData.r != 0) {
+                    if(resourceData == RGBA{128,128,128,255}) {
+                        tile->tileType = TILE_STONE;
+                        tile->amount = 4;
+                    }
+                    if(resourceData == RGBA{200,100,20,255}) {
                         tile->tileType = TILE_WOOD;
                         tile->amount = 4;
                     }

@@ -411,14 +411,14 @@ GAME_API void UpdateGame(GameState* gameState) {
                     //  we may restartPath.
                     if(!data->path->sameGoal(gameState->world, action.targetPosition)) {
                         gameState->world->pathfinder.restartPath(data->path, gameState->world, pos, action.targetPosition);
-                    }
+                    } 
                     
                     if(!data->path->finished) {
                         // Combine step speed with update_deltaTime, this requires a float accumulation field in EntityData.
-                        data->stepAcc += GameState::PATHFINDING_STEP_PER_SECOND * gameState->update_deltaTime;
-                        if(data->stepAcc > 1.f || GameState::PATHFINDING_STEP_PER_SECOND == -1) {
+                        data->stepAcc += gameState->pathfindingSpeedValue * gameState->update_deltaTime;
+                        if(data->stepAcc > 1.f || gameState->pathfindingSpeedValue == -1) {
                             int steps;
-                            if(GameState::PATHFINDING_STEP_PER_SECOND == -1) {
+                            if(gameState->pathfindingSpeedValue == -1) {
                                 steps = gameState->world->pathfinder.stepPath(gameState->world, data->path, -1); // calculate whole path
                             } else {
                                 steps = gameState->world->pathfinder.stepPath(gameState->world, data->path, (int)data->stepAcc);
@@ -700,37 +700,39 @@ void DrawPathfinding(GameState* gameState, Path* path) {
                 inst.g = 0.5;
                 inst.b = 0.6;
             }
-            // bool visible;
-            // glm::vec3 textBasePos = {inst.x+inst.sx/2, inst.y+inst.sy, inst.z+inst.sz/2};
-            // glm::vec3 coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
-            // // log::out << coord.x << " "<<coord.y << "\n";
-            // float textSize = 40.f;
-            // if(visible) {
-            //     auto costText = ui.makeText();
-            //     int len = 10;
-            //     char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
-            //     snprintf(tmp,len,"r:%d",node.remCost);
-            //     costText->string = tmp;
-            //     costText->length = strlen(tmp);
-            //     costText->color = {1.f,1.f,1.f,1.f};
-            //     costText->h = textSize / coord.z;
-            //     costText->x = coord.x - ui.getWidthOfText(costText)/2;
-            //     costText->y = coord.y + costText->h/2;
-            // }
+            if(gameState->showPathfindingNodeDetail) {
+                bool visible;
+                glm::vec3 textBasePos = {inst.x+inst.sx/2, inst.y+inst.sy, inst.z+inst.sz/2};
+                glm::vec3 coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
+                // log::out << coord.x << " "<<coord.y << "\n";
+                float textSize = 40.f;
+                if(visible) {
+                    auto costText = ui.makeText();
+                    int len = 10;
+                    char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
+                    snprintf(tmp,len,"r:%d",node.remCost);
+                    costText->string = tmp;
+                    costText->length = strlen(tmp);
+                    costText->color = {1.f,1.f,1.f,1.f};
+                    costText->h = textSize / coord.z;
+                    costText->x = coord.x - ui.getWidthOfText(costText)/2;
+                    costText->y = coord.y + costText->h/2;
+                }
 
-            // coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0.1,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
-            // if(visible) {
-            //     auto curCostText = ui.makeText();
-            //     int len = 10;
-            //     char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
-            //     snprintf(tmp,len,"c:%d",node.curCost);
-            //     curCostText->string = tmp;
-            //     curCostText->length = strlen(tmp);
-            //     curCostText->color = {1.f,1.f,1.f,1.f};
-            //     curCostText->h = textSize / coord.z;
-            //     curCostText->x = coord.x - ui.getWidthOfText(curCostText)/2;
-            //     curCostText->y = coord.y - curCostText->h/2;
-            // }
+                coord = gameState->camera.worldPosToScreenPos(textBasePos + glm::vec3{0,0.1,0},gameState->lastPerspectiveMatrix,gameState->winWidth,gameState->winHeight, visible);
+                if(visible) {
+                    auto curCostText = ui.makeText();
+                    int len = 10;
+                    char* tmp = (char*)gameState->stringAllocator_render.allocate(len);
+                    snprintf(tmp,len,"c:%d",node.curCost);
+                    curCostText->string = tmp;
+                    curCostText->length = strlen(tmp);
+                    curCostText->color = {1.f,1.f,1.f,1.f};
+                    curCostText->h = textSize / coord.z;
+                    curCostText->x = coord.x - ui.getWidthOfText(curCostText)/2;
+                    curCostText->y = coord.y - curCostText->h/2;
+                }
+            }
 
             DrawCube(gameState, inst);
 
@@ -750,7 +752,7 @@ GAME_API void RenderGame(GameState* gameState) {
         
     if(gameState->inputModule.isKeyPressed(GLFW_KEY_L)) {
         gameState->locked_fps = !gameState->locked_fps;
-        if(gameState->locked_fps) 
+        if(gameState->locked_fps)
             glfwSwapInterval(1); // limit fps to your monitors frequency?
         else
             glfwSwapInterval(0);

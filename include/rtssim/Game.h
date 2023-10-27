@@ -9,6 +9,7 @@
 
 #include "rtssim/World.h"
 #include "rtssim/Item.h"
+#include "rtssim/UI/UISlider.h"
 
 #include "rtssim/Util/Perf.h"
 #include "rtssim/Util/LinearAllocator.h"
@@ -122,6 +123,8 @@ struct GameState {
 
     engone::UIModule uiModule{};
     
+    UISlider pathfindingSpeedSlider{};
+    UISlider gameSpeedSlider{};
     // update code SHOULD NOT USE THIS ALLOCATOR!
     LinearAllocator stringAllocator_render{};
 
@@ -154,9 +157,11 @@ struct GameState {
     
     TeamResources teamResources{};
     // Pathfinder pathfinder{};
-    bool showEntityPathfinding = false;
+    bool showEntityPathfinding = true;
+    bool showPathfindingNodeDetail = false;
 
-    static const int PATHFINDING_STEP_PER_SECOND = 10; // for entities
+    static const int PATHFINDING_STEP_PER_SECOND = 23; // for entities
+    float pathfindingSpeedValue = PATHFINDING_STEP_PER_SECOND;
     
     static const glm::vec3 MSG_COLOR_RED;
     bool hasSufficientResources(EntityType entityType, bool useResources = false, bool logMissingResources = false);
